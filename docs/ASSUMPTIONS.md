@@ -4,14 +4,18 @@ These assumptions were made where the brief did not fully specify behaviour.
 Each is implemented consistently throughout the codebase and seed data.
 
 1. **Joining a pool is allowed only while it is `FORMING` or `ACCEPTED` — never after
-   the trip starts.**
-   Once the driver marks arrival or starts the trip, the passenger count is fixed;
-   adding someone mid-journey is logistically and legally unsafe.
+   the driver has arrived or the trip has started.**
+   `FORMING` is the assembling phase (driver accepted first passenger, window open for
+   more). `ACCEPTED` is the closed-and-ready phase (driver explicitly closed the pool
+   via `POST /pools/:id/close`, or created it with `waitForPool: false`). Once the
+   pool moves to `DRIVER_ARRIVED` or beyond, the passenger count is fixed.
 
-2. **Same pickup zone is mandatory; pickup points inside a zone are not modelled.**
-   The brief uses named areas (Banani, Gulshan 1, …) without street addresses.
-   Matching on zone is the simplest rule that is consistent with the brief's examples
-   and avoids a map API dependency.
+2. **Same pickup zone is mandatory; driver must also be in that zone.**
+   The brief uses named areas without street addresses. Matching on zone is the
+   simplest consistent rule. The driver sets their `current_zone_id` when going online;
+   the request feed only shows rides in that zone; `canJoin` condition 3 enforces
+   zone equality at the pool level. All three guards together ensure driver and all
+   passengers are always in the same pickup zone.
 
 3. **The detour cap is an absolute 3.0 km, not a percentage of the solo distance.**
    A percentage cap would be unreasonable on short trips — 20% of a 2 km trip is only
@@ -51,3 +55,12 @@ Each is implemented consistently throughout the codebase and seed data.
 10. **Payment is simulated — cash or wallet balance, no real gateway.**
     The brief states "Cash or simulated TeslaPay wallet — no real gateway needed."
     The MVP records a fare paisa amount; actual transfer of funds is out of scope.
+
+11. **Direction alignment uses a 90° bearing-diff threshold on seeded coordinates.**
+    Each zone carries a fixed approximate lat/lng (real Dhaka neighbourhood centroids).
+    `canJoin` computes the compass bearing from the origin to every active destination
+    and to the candidate destination using `Math.atan2`. If any pair of bearings
+    differs by more than 90°, the request is rejected with reason `'opposite_direction'`.
+    The 90° threshold is a reasonable "same half of the city" rule; no map API is used.
+    This is an explicit guard in addition to the detour-cap check — the two together
+    catch wrong-direction routes both geometrically and by actual driving distance.

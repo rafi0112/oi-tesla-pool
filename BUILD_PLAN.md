@@ -119,26 +119,53 @@ so if Rafiq cancels before pickup, Nusrat reverts to the solo fare.
 ### 3.2 Matching rule
 
 ```ts
-export const POOL_POLICY = { detourCapKm: 3.0, poolWindowMinutes: 10 }
+export const POOL_POLICY = {
+  detourCapKm: 3.0,
+  poolWindowMinutes: 10,
+  maxBearingDiffDeg: 90,   // destinations must be within 90° of each other
+}
 ```
 
-A ride request may join an existing pool only when **all five** hold:
+A ride request may join an existing pool only when **all six** hold:
 
 1. `pool.status` is `FORMING` or `ACCEPTED`
 2. `pool.seats_available >= request.seats`
 3. `request.pickup_zone_id === pool.origin_zone_id`
 4. `pooledRouteKm <= max(soloKm of all active members incl. the candidate) + detourCapKm`
 5. `pool.wait_for_pool === true AND now - pool.created_at <= poolWindowMinutes`
+6. `angleDiff(bearing(origin, existingDest), bearing(origin, newDest)) <= maxBearingDiffDeg`
+   for every existing active member — rejects when a destination is in the opposite direction
 
 `pooledRouteKm` is computed greedily: start at the origin zone, repeatedly travel
 to the nearest not-yet-visited destination zone among all active members, summing
 distances from the seeded matrix.
 
-Must hold for the story: Banani → Mohakhali → Gulshan 1 = 3.0 + 2.0 = 5.0 km;
-longest solo leg is Rafiq's 4.0 km; cap = 7.0 km; 5.0 ≤ 7.0, so they pool.
+**Bearing helpers** (pure, in `matching.ts`):
 
-`canJoin(pool, request, distances)` returns `{ ok: boolean, reason?: string }`
-and is a pure function.
+```ts
+function bearingDeg(from: Zone, to: Zone): number {
+  const dLng = (to.lng - from.lng) * Math.PI / 180
+  const lat1 = from.lat * Math.PI / 180
+  const lat2 = to.lat * Math.PI / 180
+  const y = Math.sin(dLng) * Math.cos(lat2)
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng)
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360
+}
+
+function angleDiff(a: number, b: number): number {
+  const d = Math.abs(a - b) % 360
+  return d > 180 ? 360 - d : d
+}
+```
+
+`Zone` carries `{ lat: number, lng: number }` from the seeded coordinates.
+
+Must hold for the story: Banani → Mohakhali → Gulshan 1 = 3.0 + 2.0 = 5.0 km;
+longest solo leg is Rafiq's 4.0 km; cap = 7.0 km; 5.0 ≤ 7.0 ✓. Mohakhali and
+Gulshan 1 are both roughly south of Banani — bearing diff ≈ 40° ≤ 90° ✓, so they pool.
+
+`canJoin(pool, request, zones, distances)` returns `{ ok: boolean, reason?: string }`
+and is a pure function. It now receives `zones` (a map of id → Zone) in addition to distances.
 
 **wait_for_pool flag.** When the first passenger's ride is accepted and a pool is
 created, the driver asks the passenger: "Wait for another passenger?"
@@ -179,6 +206,19 @@ A single `assertTransition(table, from, to)` guards every status change.
 Every status change writes a row to the appropriate event table **inside the same
 transaction** as the status update — pool transitions to `pool_status_events`,
 ride transitions to `ride_status_events`.
+
+**Pool lifecycle — how states are entered:**
+
+| Pool status | Entered when |
+|---|---|
+| `FORMING` | Driver accepts first request with `waitForPool: true` — pool assembling, window open |
+| `ACCEPTED` | Driver accepts first request with `waitForPool: false` (immediate); OR driver calls `POST /pools/:id/close` to end the FORMING window |
+| `DRIVER_ARRIVED` | Driver calls `POST /pools/:id/arrive` |
+| `EN_ROUTE` | Driver calls `POST /pools/:id/start`; all matched rides → `PICKED_UP`, fares locked |
+| `COMPLETED` | Driver calls `POST /pools/:id/complete`; no `PICKED_UP` rides may remain |
+| `CANCELLED` | All passengers cancel (auto); or driver cancels before `EN_ROUTE` |
+
+No state is unreachable. `FORMING` is the assembling phase; `ACCEPTED` means closed and ready to move.
 
 ### 3.4 Seat capacity — the most important code in the project
 
@@ -329,7 +369,7 @@ rule: no business logic in controllers.
 
 **(c)** A Mermaid `erDiagram` with eight tables:
 
-- `users` — id, name, email, password_hash, role (PASSENGER/DRIVER), is_online
+- `users` — id, name, email, password_hash, role (PASSENGER/DRIVER), is_online, current_zone_id (nullable FK, drivers only)
 - `vehicles` — id, driver_id (unique FK), name, seat_capacity
 - `zones` — id, name
 - `zone_distances` — from_zone_id, to_zone_id, distance_km
@@ -451,13 +491,14 @@ Commit: `feat(db): add sql migration runner`
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE users (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name          TEXT NOT NULL,
-  email         TEXT NOT NULL UNIQUE,
-  password_hash TEXT NOT NULL,
-  role          TEXT NOT NULL CHECK (role IN ('PASSENGER','DRIVER')),
-  is_online     BOOLEAN NOT NULL DEFAULT false,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name            TEXT NOT NULL,
+  email           TEXT NOT NULL UNIQUE,
+  password_hash   TEXT NOT NULL,
+  role            TEXT NOT NULL CHECK (role IN ('PASSENGER','DRIVER')),
+  is_online       BOOLEAN NOT NULL DEFAULT false,
+  current_zone_id INT  REFERENCES zones(id),   -- drivers only; null when offline
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE vehicles (
@@ -469,7 +510,9 @@ CREATE TABLE vehicles (
 
 CREATE TABLE zones (
   id   SERIAL PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE
+  name TEXT NOT NULL UNIQUE,
+  lat  NUMERIC(9,6) NOT NULL,
+  lng  NUMERIC(9,6) NOT NULL
 );
 
 CREATE TABLE zone_distances (
@@ -567,8 +610,21 @@ Users — password `Password123!` for all, hashed with argon2:
 
 Vehicle: **Bullet**, owned by Jashim, `seat_capacity` 3.
 
-Zones: Banani, Gulshan 1, Mohakhali, Dhanmondi, Mirpur, Uttara, Farmgate,
-Bashundhara.
+Zones — insert with approximate real-world coordinates:
+
+| Name | lat | lng |
+|---|---|---|
+| Banani | 23.793700 | 90.406600 |
+| Gulshan 1 | 23.780800 | 90.415400 |
+| Mohakhali | 23.777900 | 90.399700 |
+| Dhanmondi | 23.746100 | 90.374200 |
+| Mirpur | 23.822300 | 90.365400 |
+| Uttara | 23.875900 | 90.379500 |
+| Farmgate | 23.756900 | 90.389300 |
+| Bashundhara | 23.814100 | 90.424300 |
+
+Bearing-diff check for the story pair (from Banani): Mohakhali is SSW ≈ 199°,
+Gulshan 1 is SSE ≈ 161° — diff ≈ 38° ≤ 90° → they pool ✓.
 
 Distances in km — insert **both directions** for every pair:
 
@@ -675,25 +731,36 @@ translate it). Writes `quoted_fare_paisa` from the solo fare.
 Commit: `feat(ride): add ride request creation with idempotency key`
 
 **E2 — Matching rule**
-`src/domain/matching.ts` exactly as §3.2, including `pooledRouteKm` greedy ordering.
-Pure function, no db access.
+`src/domain/matching.ts` exactly as §3.2, including `pooledRouteKm` greedy ordering,
+`bearingDeg`, `angleDiff`, and all six conditions of `canJoin`. The function now
+takes `zones: Map<number, Zone>` alongside `distances`. Pure function, no db access.
 
-Commit: `feat(pool): add same-origin detour-capped matching rule`
+Commit: `feat(pool): add same-origin detour-capped direction-aware matching rule`
 
 **E3 — Pool creation**
-`POST /pools` `{ rideRequestId }` (driver only). Creates a pool for the driver's
-vehicle with `seats_available = seat_capacity - request.seats`, status `ACCEPTED`,
-`origin_zone_id` from the request, and moves the ride to `MATCHED` with its
-`pool_id` set — all in one transaction, with a status event written.
-Rejects if the driver already has an active pool (the partial unique index).
+`POST /pools` `{ rideRequestId, waitForPool: boolean }` (driver only).
+
+Pre-conditions (reject 422/409 otherwise):
+- The request's `pickup_zone_id` must equal `driver.current_zone_id` — driver and
+  passenger must be in the same zone.
+- Driver must not already have an active pool (partial unique index).
+
+Creates a pool with:
+- `seats_available = seat_capacity - request.seats`
+- `wait_for_pool` from the body
+- `status = 'FORMING'` if `waitForPool === true`; `status = 'ACCEPTED'` otherwise
+- `origin_zone_id = request.pickup_zone_id`
+
+Moves the ride to `MATCHED` with `pool_id` set. All in one transaction; status events
+written for both the pool and the ride.
 
 Commit: `feat(pool): create pool on first accepted request`
 
 **E4 — Joining a pool, atomically**
 `POST /pools/:id/rides` `{ rideRequestId }` (driver only). In one transaction:
-run `canJoin`; reject with `NOT_JOINABLE` and the reason if false; then the atomic
-conditional UPDATE from §3.4; `rowCount === 0` → `POOL_FULL`; then move the ride to
-`MATCHED`, set `pool_id`, and write the status event.
+run `canJoin(pool, request, zones, distances)`; reject with `NOT_JOINABLE` and the
+reason if false; then the atomic conditional UPDATE from §3.4; `rowCount === 0` →
+`POOL_FULL`; then move the ride to `MATCHED`, set `pool_id`, and write the status event.
 
 Commit: `feat(pool): enforce Bullet's seat capacity atomically`
 
@@ -746,28 +813,36 @@ Commit: `feat(ride): lock fares when the trip starts`
 Branch: `feature/driver-flow`
 
 **G1 — Availability**
-`PATCH /drivers/me` `{ isOnline }`. Offline drivers receive no request feed.
+`PATCH /drivers/me` `{ isOnline: boolean, zoneId?: number }`.
 
-Commit: `feat(driver): add online and offline availability`
+- Setting `isOnline: true` requires `zoneId` — rejects 422 without it.
+- Sets `current_zone_id` when going online; clears it (sets to null) when going offline.
+- Offline drivers receive no request feed.
+
+Commit: `feat(driver): add online and offline availability with zone`
 
 **G2 — Request feed**
-`GET /driver/requests` — open `REQUESTED` rides, newest first. If the driver has an
-active pool, annotate each with `{ joinable: boolean, reason?: string }` from
-`canJoin`. Uses the `open_requests_by_zone` partial index.
+`GET /driver/requests` — open `REQUESTED` rides where
+`pickup_zone_id = driver.current_zone_id`, newest first. Returns 403 if driver is
+offline (no zone set). If the driver has an active pool, annotate each with
+`{ joinable: boolean, reason?: string }` from `canJoin(pool, request, zones, distances)`.
+Uses the `open_requests_by_zone` partial index.
 
-Commit: `feat(driver): add open request feed with joinability hints`
+Commit: `feat(driver): add zone-filtered open request feed with joinability hints`
 
 **G3 — Trip actions**
-`POST /pools/:id/arrive` → `DRIVER_ARRIVED`.
-`POST /pools/:id/start` → `EN_ROUTE`, moves every `MATCHED` member to `PICKED_UP`
-and locks fares (F4).
-`POST /pools/:id/rides/:rideId/dropoff` → that member to `DROPPED_OFF` only.
-`POST /pools/:id/complete` → `COMPLETED`; rejected while any member is still
-`PICKED_UP`.
-`GET /pools/active` — the driver's current pool.
+`POST /pools/:id/close`   → `FORMING → ACCEPTED` (driver closes the assembling window;
+                             rejects with `INVALID_TRANSITION` if pool is not `FORMING`).
+`POST /pools/:id/arrive`  → `ACCEPTED → DRIVER_ARRIVED`.
+`POST /pools/:id/start`   → `DRIVER_ARRIVED → EN_ROUTE`, moves every `MATCHED` member
+                             to `PICKED_UP` and locks fares (F4).
+`POST /pools/:id/rides/:rideId/dropoff` → that member `PICKED_UP → DROPPED_OFF` only.
+`POST /pools/:id/complete` → `EN_ROUTE → COMPLETED`; rejected while any member is
+                             still `PICKED_UP`.
+`GET /pools/active`        — the driver's current active pool with full passenger list.
 All driver-only, all ownership-checked (404 if the pool is not this driver's).
 
-Commit: `feat(driver): add arrive, start, dropoff and complete actions`
+Commit: `feat(driver): add close, arrive, start, dropoff and complete actions`
 
 **G4 — Role-scoped DTOs**
 Implement §3.6 and route every response through them. Verify by hand that a
@@ -787,8 +862,10 @@ no database.
 **H1 — Domain unit tests**
 - Nusrat's pooled fare is exactly `4000`; Rafiq's is exactly `4800` (`toBe`, not `toBeCloseTo`)
 - solo fares are `5000` and `6000`
-- `canJoin` accepts the Nusrat/Rafiq case (5.0 km ≤ 7.0 km cap)
+- `canJoin` accepts the Nusrat/Rafiq case (5.0 km ≤ 7.0 km cap, bearing diff ≈ 38°)
 - `canJoin` rejects a different pickup zone, a full pool, and an `EN_ROUTE` pool
+- `canJoin` rejects when destination bearing diff > 90° (e.g. Banani origin, one dest
+  north toward Uttara, one dest south toward Dhanmondi)
 - `assertTransition` rejects `DROPPED_OFF → PICKED_UP`
 
 Commit: `test(domain): cover fare, matching and transition rules`
@@ -839,14 +916,31 @@ Once a ride is active, the same page shows a status timeline
 vehicle, `Shared with N other passenger(s)`, and a Cancel button that is disabled
 whenever `canCancel` is false. Polls every 4 seconds while a ride is active.
 
-Commit: `feat(web): add passenger booking and ride tracking`
+Below the active ride card: a **"Past rides"** section — a simple list of rides with
+status `DROPPED_OFF` or `CANCELLED` from `GET /rides/mine`, showing pickup zone,
+destination zone, final fare (or quoted fare if cancelled), and date. Empty state:
+"No past rides yet." No separate page or navigation needed.
+
+Commit: `feat(web): add passenger booking, ride tracking and past rides history`
 
 **I4 — Driver page**
-Online/offline toggle. Open request feed with an Accept button — disabled with the
-reason shown when `joinable` is false. Active pool panel: seats remaining out of
-capacity, each passenger with pickup and destination, and per-passenger Drop off
-buttons. Arrive / Start / Complete buttons gated by pool status. Shows the
-`POOL_FULL` message plainly when the race is lost. Polls every 4 seconds.
+Online/offline toggle with a **zone selector** (required when going online; dropdown
+of all zones from `GET /zones`). Open request feed — only shows rides in the driver's
+current zone. Each request has an Accept button — disabled with the reason shown when
+`joinable` is false. When accepting the **first** request, a "Wait for another
+passenger?" toggle (yes/no, default no) sets `waitForPool` in the `POST /pools` body.
+
+Active pool panel shows:
+- Pool status badge and seats remaining out of capacity
+- Each passenger: name, pickup zone → destination zone, ride status
+- **Close Pool** button (visible and enabled only when pool is `FORMING`); pressing it
+  calls `POST /pools/:id/close`
+- **Arrive** button (enabled when `ACCEPTED`), **Start** button (enabled when
+  `DRIVER_ARRIVED`), per-passenger **Drop off** buttons (enabled when `EN_ROUTE`),
+  **Complete** button (enabled when all members are `DROPPED_OFF`)
+- Shows `POOL_FULL` or `OPPOSITE_DIRECTION` message plainly when a join is rejected
+
+Polls every 4 seconds.
 
 Commit: `feat(web): add driver dashboard and active pool management`
 

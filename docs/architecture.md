@@ -63,6 +63,7 @@ erDiagram
         TEXT password_hash
         TEXT role
         BOOLEAN is_online
+        INT current_zone_id FK
         TIMESTAMPTZ created_at
     }
     vehicles {
@@ -74,6 +75,8 @@ erDiagram
     zones {
         SERIAL id PK
         TEXT name
+        NUMERIC lat
+        NUMERIC lng
     }
     zone_distances {
         INT from_zone_id FK
@@ -123,6 +126,7 @@ erDiagram
 
     users ||--o| vehicles : "owns (driver_id UNIQUE)"
     users ||--o{ ride_requests : "books"
+    users }o--o| zones : "driver current zone (nullable)"
     vehicles ||--o{ pools : "carries"
     pools ||--o{ ride_requests : "groups (one row per passenger)"
     pools ||--o{ pool_status_events : "logs pool transitions"
@@ -146,6 +150,12 @@ Each passenger books independently and has their own status, fare, pickup, and d
 
 **Two separate event tables, not one.**
 `pool_status_events` records pool-level transitions (`FORMING → ACCEPTED → EN_ROUTE → COMPLETED`). `ride_status_events` records individual ride transitions (`REQUESTED → MATCHED → PICKED_UP → DROPPED_OFF`). When a pool goes `EN_ROUTE` and all passengers go `PICKED_UP`, that is one row in `pool_status_events` and one row per passenger in `ride_status_events`, all written in the same transaction. Keeping them separate avoids nullable FK columns, avoids junction tables, and keeps each audit query simple.
+
+**`current_zone_id` on `users` (drivers only).**
+Drivers set their current zone when going online (`PATCH /drivers/me { isOnline: true, zoneId }`). The request feed (`GET /driver/requests`) filters rides by `pickup_zone_id = driver.current_zone_id`, so a driver only sees — and can only serve — passengers in their zone. The column is nullable: `null` means offline. `canJoin` condition 3 (`pickup_zone_id = pool.origin_zone_id`) reinforces this at the pool level, ensuring all passengers in a pool share the same pickup zone as the driver.
+
+**`lat` / `lng` on `zones` and direction alignment check.**
+Zones carry approximate real-world coordinates (NUMERIC(9,6)). `canJoin` uses these to compute the compass bearing from the origin zone to each destination zone via `bearingDeg(from, to)` (a pure `Math.atan2` calculation). If the angle between any two passengers' destination bearings exceeds 90°, the request is rejected with `reason: 'opposite_direction'`. This is an explicit guard on top of the detour-cap check — it produces a clear user-facing message ("Your destination is in the opposite direction") rather than a vague detour error, and it is zero-cost: no map API, no network call.
 
 **`wait_for_pool` on `pools`.**
 When the first passenger's ride is accepted, the driver asks them whether they are willing to wait for a second passenger. `wait_for_pool = false` closes the pool to new joiners immediately — the driver can depart right away. `wait_for_pool = true` opens a 10-minute window during which a second passenger may join. The flag makes the first passenger's preference an explicit datum in the database rather than implicit timing logic.

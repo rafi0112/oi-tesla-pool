@@ -487,8 +487,20 @@ Commit: `feat(db): add sql migration runner`
 
 `api/migrations/001_init.sql` — use exactly this:
 
+> **Table order matters.** `zones` is created first because `users.current_zone_id`
+> references it. FK dependencies dictate the order:
+> `zones → users → vehicles → zone_distances → pools → ride_requests → events`.
+
 ```sql
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- zones first: referenced by users (current_zone_id), pools, ride_requests, zone_distances
+CREATE TABLE zones (
+  id   SERIAL PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  lat  NUMERIC(9,6) NOT NULL,
+  lng  NUMERIC(9,6) NOT NULL
+);
 
 CREATE TABLE users (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -497,7 +509,7 @@ CREATE TABLE users (
   password_hash   TEXT NOT NULL,
   role            TEXT NOT NULL CHECK (role IN ('PASSENGER','DRIVER')),
   is_online       BOOLEAN NOT NULL DEFAULT false,
-  current_zone_id INT  REFERENCES zones(id),   -- drivers only; null when offline
+  current_zone_id INT  REFERENCES zones(id),
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -506,13 +518,6 @@ CREATE TABLE vehicles (
   driver_id     UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
   name          TEXT NOT NULL,
   seat_capacity INT  NOT NULL CHECK (seat_capacity > 0)
-);
-
-CREATE TABLE zones (
-  id   SERIAL PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
-  lat  NUMERIC(9,6) NOT NULL,
-  lng  NUMERIC(9,6) NOT NULL
 );
 
 CREATE TABLE zone_distances (

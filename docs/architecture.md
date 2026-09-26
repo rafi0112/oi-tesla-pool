@@ -170,5 +170,8 @@ A passenger may cancel their own ride at any time before boarding (`PICKED_UP`).
 **`quoted_fare_paisa` and `final_fare_paisa` are separate columns.**
 `quoted_fare_paisa` is calculated at booking time and may change (e.g., a second passenger joins and the pool discount applies, or someone cancels and the discount is lost). `final_fare_paisa` is written exactly once, when the trip starts (`EN_ROUTE`), and never changes. Keeping them separate makes the audit trail unambiguous.
 
+**Table creation order is `zones → users → vehicles → zone_distances → pools → ride_requests → events`.**
+`users.current_zone_id` references `zones`, so `zones` must exist before `users`. This breaks from the original brief's suggested order (which had `users` first) but is required by PostgreSQL's FK constraint validation at CREATE time. The migration file reflects this dependency chain explicitly with a comment.
+
 **Every money column carries a `_paisa` suffix.**
 All currency is stored as integer paisa (1 taka = 100 paisa). The suffix is a compile-time and grep-time reminder that a value is paisa, not taka — preventing accidental decimal arithmetic or display of raw paisa to users. Conversion to taka happens in exactly one place: `formatTaka` in `money.ts`.

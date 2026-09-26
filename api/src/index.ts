@@ -5,6 +5,7 @@ import { config } from './config'
 import { errorHandler } from './middleware/errorHandler'
 import authRoutes from './routes/auth.routes'
 import rideRoutes from './routes/ride.routes'
+import poolRoutes from './routes/pool.routes'
 
 const app = express()
 
@@ -17,6 +18,7 @@ app.get('/health', (_req, res) => {
 })
 
 app.use('/auth', authRoutes)
+app.use('/pools', poolRoutes)
 app.use('/', rideRoutes)
 
 // error handler must be last

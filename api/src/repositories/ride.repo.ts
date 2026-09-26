@@ -73,6 +73,22 @@ export async function createRide(
   return ride!
 }
 
+export async function updateRideStatus(
+  tx: PoolClient,
+  rideId: string,
+  status: string,
+): Promise<void> {
+  await tx.query(`UPDATE ride_requests SET status = $2 WHERE id = $1`, [rideId, status])
+}
+
+export async function setRidePool(
+  tx: PoolClient,
+  rideId: string,
+  poolId: string,
+): Promise<void> {
+  await tx.query(`UPDATE ride_requests SET pool_id = $2 WHERE id = $1`, [rideId, poolId])
+}
+
 export async function countActivePassengersInPool(tx: PoolClient, poolId: string): Promise<number> {
   const { rows } = await tx.query<{ count: string }>(
     `SELECT COUNT(*) AS count FROM ride_requests

@@ -3,6 +3,7 @@ import cors from 'cors'
 import pinoHttp from 'pino-http'
 import { config } from './config'
 import { errorHandler } from './middleware/errorHandler'
+import authRoutes from './routes/auth.routes'
 
 const app = express()
 
@@ -13,6 +14,8 @@ app.use(pinoHttp())
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' })
 })
+
+app.use('/auth', authRoutes)
 
 // error handler must be last
 app.use(errorHandler)

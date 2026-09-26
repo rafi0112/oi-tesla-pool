@@ -4,6 +4,7 @@ import pinoHttp from 'pino-http'
 import { config } from './config'
 import { errorHandler } from './middleware/errorHandler'
 import authRoutes from './routes/auth.routes'
+import rideRoutes from './routes/ride.routes'
 
 const app = express()
 
@@ -16,6 +17,7 @@ app.get('/health', (_req, res) => {
 })
 
 app.use('/auth', authRoutes)
+app.use('/', rideRoutes)
 
 // error handler must be last
 app.use(errorHandler)

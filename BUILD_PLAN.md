@@ -162,10 +162,19 @@ function angleDiff(a: number, b: number): number {
 
 Must hold for the story: Banani → Mohakhali → Gulshan 1 = 3.0 + 2.0 = 5.0 km;
 longest solo leg is Rafiq's 4.0 km; cap = 7.0 km; 5.0 ≤ 7.0 ✓. Mohakhali and
-Gulshan 1 are both roughly south of Banani — bearing diff ≈ 40° ≤ 90° ✓, so they pool.
+Gulshan 1 are both roughly south of Banani — bearing diff ≈ 53.8° ≤ 90° ✓, so they pool.
 
-`canJoin(pool, request, zones, distances)` returns `{ ok: boolean, reason?: string }`
-and is a pure function. It now receives `zones` (a map of id → Zone) in addition to distances.
+`canJoin(pool, request, zones, distances, now?)` returns `{ ok: boolean, reason?: string }`
+and is a pure function. It receives `zones` (a map of id → Zone) in addition to distances.
+`now` defaults to `new Date()`; tests pass it explicitly so condition 5 is deterministic.
+
+The domain types are camelCase (`seatsAvailable`, `originZoneId`, `waitForPool`,
+`createdAt`, `pickupZoneId`) so `src/domain/` never sees a database row shape.
+`pool.service.ts` maps the row to a `PoolSnapshot` before calling `canJoin`.
+
+Rejection reasons, one per failed condition: `pool_not_joinable`, `pool_full`,
+`different_pickup_zone`, `not_waiting_for_pool`, `pool_window_expired`,
+`opposite_direction`, `detour_too_long`, `no_route`, `unknown_zone`.
 
 **wait_for_pool flag.** When the first passenger's ride is accepted and a pool is
 created, the driver asks the passenger: "Wait for another passenger?"
@@ -628,8 +637,10 @@ Zones — insert with approximate real-world coordinates:
 | Farmgate | 23.756900 | 90.389300 |
 | Bashundhara | 23.814100 | 90.424300 |
 
-Bearing-diff check for the story pair (from Banani): Mohakhali is SSW ≈ 199°,
-Gulshan 1 is SSE ≈ 161° — diff ≈ 38° ≤ 90° → they pool ✓.
+Bearing-diff check for the story pair (from Banani): Mohakhali is SSW ≈ 201.8°,
+Gulshan 1 is SSE ≈ 148.0° — diff ≈ 53.8° ≤ 90° → they pool ✓.
+Rejection pair: Uttara ≈ 343.2° (N) vs Dhanmondi ≈ 211.9° (SSW) — diff ≈ 131.3° > 90° ✗.
+These are the values `bearingDeg` actually returns for the seeded coordinates.
 
 Distances in km — insert **both directions** for every pair:
 
@@ -867,7 +878,7 @@ no database.
 **H1 — Domain unit tests**
 - Nusrat's pooled fare is exactly `4000`; Rafiq's is exactly `4800` (`toBe`, not `toBeCloseTo`)
 - solo fares are `5000` and `6000`
-- `canJoin` accepts the Nusrat/Rafiq case (5.0 km ≤ 7.0 km cap, bearing diff ≈ 38°)
+- `canJoin` accepts the Nusrat/Rafiq case (5.0 km ≤ 7.0 km cap, bearing diff ≈ 53.8°)
 - `canJoin` rejects a different pickup zone, a full pool, and an `EN_ROUTE` pool
 - `canJoin` rejects when destination bearing diff > 90° (e.g. Banani origin, one dest
   north toward Uttara, one dest south toward Dhanmondi)

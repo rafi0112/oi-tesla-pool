@@ -128,7 +128,7 @@ A ride request may join an existing pool only when **all five** hold:
 2. `pool.seats_available >= request.seats`
 3. `request.pickup_zone_id === pool.origin_zone_id`
 4. `pooledRouteKm <= max(soloKm of all active members incl. the candidate) + detourCapKm`
-5. `now - pool.created_at <= poolWindowMinutes`
+5. `pool.wait_for_pool === true AND now - pool.created_at <= poolWindowMinutes`
 
 `pooledRouteKm` is computed greedily: start at the origin zone, repeatedly travel
 to the nearest not-yet-visited destination zone among all active members, summing
@@ -139,6 +139,20 @@ longest solo leg is Rafiq's 4.0 km; cap = 7.0 km; 5.0 ≤ 7.0, so they pool.
 
 `canJoin(pool, request, distances)` returns `{ ok: boolean, reason?: string }`
 and is a pure function.
+
+**wait_for_pool flag.** When the first passenger's ride is accepted and a pool is
+created, the driver asks the passenger: "Wait for another passenger?"
+
+- `wait_for_pool = false` — condition 5 always fails; no second passenger can join;
+  the driver may start the trip immediately.
+- `wait_for_pool = true` — the standard 10-minute window applies; a second passenger
+  may join if the other four conditions hold.
+
+The first passenger may also cancel their ride entirely if the conditions do not suit
+them (see §3.5 cancellation rules).
+
+**Future feature (not in MVP):** the driver may offer a fare discount to encourage
+the first passenger to set `wait_for_pool = true`. The passenger may still decline.
 
 ### 3.3 State machines
 
@@ -162,8 +176,9 @@ POOL_TRANSITIONS = {
 ```
 
 A single `assertTransition(table, from, to)` guards every status change.
-Every status change writes a row to `ride_status_events` **inside the same
-transaction** as the update.
+Every status change writes a row to the appropriate event table **inside the same
+transaction** as the status update — pool transitions to `pool_status_events`,
+ride transitions to `ride_status_events`.
 
 ### 3.4 Seat capacity — the most important code in the project
 
@@ -184,7 +199,54 @@ if (rowCount === 0) throw new ConflictError('POOL_FULL', 'That seat was just tak
 Seats are returned on cancellation with the mirrored `+ $2` update, guarded so it
 can never exceed the vehicle capacity.
 
-### 3.5 Error contract
+### 3.5 Event tables and cancellation rules
+
+**Two event tables — never a junction.**
+
+`pool_status_events` records pool-level transitions. One row per pool state change.
+
+```sql
+pool_status_events (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  pool_id       UUID NOT NULL REFERENCES pools(id),
+  from_status   TEXT,
+  to_status     TEXT NOT NULL,
+  actor_user_id UUID REFERENCES users(id),
+  reason        TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+```
+
+`ride_status_events` records individual ride transitions. One row per ride per state change.
+
+```sql
+ride_status_events (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ride_request_id UUID NOT NULL REFERENCES ride_requests(id) ON DELETE CASCADE,
+  from_status     TEXT,
+  to_status       TEXT NOT NULL,
+  actor_user_id   UUID REFERENCES users(id),
+  reason          TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+```
+
+Two helpers enforce the write-in-same-transaction rule:
+- `transitionPool(tx, pool, next, actorId, reason?)` — asserts, updates, inserts into `pool_status_events`
+- `transitionRide(tx, ride, next, actorId, reason?)` — asserts, updates, inserts into `ride_status_events`
+
+**Cancellation rules.**
+
+| Situation | Result |
+|---|---|
+| First passenger cancels **before** second joins | Their ride → `CANCELLED`; pool → `CANCELLED` (auto); `pool_status_events` row written with `reason: 'sole_passenger_cancelled'` |
+| Any passenger cancels **after** second joins | Only their ride → `CANCELLED`; seats returned to pool atomically; fare recomputed for remaining passengers; pool continues |
+| All passengers cancel | Pool auto-cancels; `pool_status_events` row written with `reason: 'all_passengers_cancelled'` |
+| Passenger tries to cancel after `PICKED_UP` | Rejected by `RIDE_TRANSITIONS` — `PICKED_UP` has no `CANCELLED` edge |
+
+The auto-cancel check runs at the end of every ride cancellation: if `seats_available === seat_capacity` (all seats freed), cancel the pool in the same transaction.
+
+### 3.6 Error contract
 
 Every error response is:
 
@@ -205,7 +267,7 @@ Every error response is:
 
 Ownership failures return **404, not 403**, to avoid resource enumeration.
 
-### 3.6 DTOs
+### 3.7 DTOs
 
 `toPassengerRideDTO` returns: id, status, farePaisa, pickup/destination zone names,
 seats, driver `{ name, vehicle }` when matched, `sharedWith` (count of other active
@@ -265,22 +327,27 @@ dotted arrows.
 **(b)** A table of the layers, one line of responsibility each. The governing
 rule: no business logic in controllers.
 
-**(c)** A Mermaid `erDiagram` with seven tables:
+**(c)** A Mermaid `erDiagram` with eight tables:
 
 - `users` — id, name, email, password_hash, role (PASSENGER/DRIVER), is_online
 - `vehicles` — id, driver_id (unique FK), name, seat_capacity
 - `zones` — id, name
 - `zone_distances` — from_zone_id, to_zone_id, distance_km
-- `pools` — id, vehicle_id, origin_zone_id, seats_available, status, created_at
+- `pools` — id, vehicle_id, origin_zone_id, seats_available, status,
+  wait_for_pool, created_at
 - `ride_requests` — id, passenger_id, pool_id (nullable), pickup_zone_id,
   destination_zone_id, seats, quoted_fare_paisa, final_fare_paisa, status,
-  idempotency_key
+  idempotency_key. **One row per passenger** — every passenger who joins a pool
+  gets their own row, linked via pool_id.
+- `pool_status_events` — id, pool_id, from_status, to_status, actor_user_id,
+  reason, created_at. Records pool-level transitions.
 - `ride_status_events` — id, ride_request_id, from_status, to_status,
-  actor_user_id, created_at
+  actor_user_id, reason, created_at. Records individual ride transitions.
 
 Relationships: users 1—0..1 vehicles · users 1—0..* ride_requests ·
 vehicles 1—0..* pools · pools 1—0..* ride_requests ·
-ride_requests 1—0..* ride_status_events · zones 1—0..* ride_requests.
+pools 1—0..* pool_status_events · ride_requests 1—0..* ride_status_events ·
+zones 1—0..* ride_requests.
 
 Finish with a short "Design decisions" section: why `seats_available` is its own
 column (it is the target of the atomic update), why `pool_id` is nullable (a
@@ -419,6 +486,7 @@ CREATE TABLE pools (
   seats_available INT  NOT NULL CHECK (seats_available >= 0),
   status          TEXT NOT NULL CHECK (status IN
                     ('FORMING','ACCEPTED','DRIVER_ARRIVED','EN_ROUTE','COMPLETED','CANCELLED')),
+  wait_for_pool   BOOLEAN NOT NULL DEFAULT false,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -436,6 +504,16 @@ CREATE TABLE ride_requests (
   idempotency_key     TEXT UNIQUE,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (pickup_zone_id <> destination_zone_id)
+);
+
+CREATE TABLE pool_status_events (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  pool_id       UUID NOT NULL REFERENCES pools(id),
+  from_status   TEXT,
+  to_status     TEXT NOT NULL,
+  actor_user_id UUID REFERENCES users(id),
+  reason        TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE ride_status_events (
@@ -466,6 +544,7 @@ CREATE INDEX ON pools(vehicle_id, status);
 CREATE INDEX open_requests_by_zone
   ON ride_requests(pickup_zone_id) WHERE status = 'REQUESTED';
 CREATE INDEX ON ride_status_events(ride_request_id, created_at);
+CREATE INDEX ON pool_status_events(pool_id, created_at);
 ```
 
 Do not alter this SQL.

@@ -2,12 +2,16 @@ import { Router } from 'express'
 import { validate } from '../middleware/validate'
 import { authenticate } from '../middleware/auth'
 import { requireRole } from '../middleware/requireRole'
-import { availabilitySchema, setAvailabilityHandler } from '../controllers/driver.controller'
+import {
+  availabilitySchema, setAvailabilityHandler,
+  requestFeedHandler,
+} from '../controllers/driver.controller'
 
 const router = Router()
 
 router.use(authenticate, requireRole('DRIVER'))
 
-router.patch('/me', validate(availabilitySchema), setAvailabilityHandler)
+router.patch('/me',       validate(availabilitySchema), setAvailabilityHandler)
+router.get('/requests',   requestFeedHandler)
 
 export default router

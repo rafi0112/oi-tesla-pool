@@ -21,7 +21,7 @@ import { insertPoolEvent } from '../repositories/event.repo'
 import { transitionRide, transitionPool } from './transition'
 import { fareFor } from '../domain/fare'
 import { toDriverPoolDTO, DriverPoolDTO } from '../dto/driver.dto'
-import { canJoin, PoolSnapshot } from '../domain/matching'
+import { canJoin, PoolSnapshot, Zone, DistanceMatrix } from '../domain/matching'
 import { assertTransition } from '../domain/stateMachine'
 import { ConflictError, NotFoundError, ValidationError } from '../errors'
 
@@ -35,6 +35,26 @@ export const joinPoolSchema = z.object({
 })
 
 const ACTIVE_MEMBER_STATUSES = new Set(['MATCHED', 'PICKED_UP'])
+
+export interface JoinContext {
+  snapshot: PoolSnapshot
+  zones: Map<number, Zone>
+  distances: DistanceMatrix
+}
+
+/**
+ * Everything canJoin needs for one pool. Shared by the join endpoint and the
+ * driver's request feed so the feed can never advertise a request as joinable
+ * that the join itself would refuse.
+ */
+export async function loadJoinContext(pool: PoolRow): Promise<JoinContext> {
+  const [members, zones, distances] = await Promise.all([
+    findPoolMembers(pool.id),
+    getZoneMap(),
+    getDistanceMatrix(),
+  ])
+  return { snapshot: toSnapshot(pool, members), zones, distances }
+}
 
 function toSnapshot(pool: PoolRow, members: PoolMemberRow[]): PoolSnapshot {
   return {
@@ -132,23 +152,19 @@ export async function joinPool(
   const ride = await findRideById(data.rideRequestId)
   if (!ride) throw new NotFoundError('Ride request not found')
 
-  const [members, zones, distances] = await Promise.all([
-    findPoolMembers(poolId),
-    getZoneMap(),
-    getDistanceMatrix(),
-  ])
+  const ctx = await loadJoinContext(pool)
 
   // Advisory check — gives the driver a precise reason. The seat guarantee is
   // the atomic UPDATE below, not this snapshot.
   const verdict = canJoin(
-    toSnapshot(pool, members),
+    ctx.snapshot,
     {
       seats:             ride.seats,
       pickupZoneId:      ride.pickup_zone_id,
       destinationZoneId: ride.destination_zone_id,
     },
-    zones,
-    distances,
+    ctx.zones,
+    ctx.distances,
   )
   if (!verdict.ok) {
     throw new ConflictError('NOT_JOINABLE', joinRejectionMessage(verdict.reason), {
@@ -179,7 +195,7 @@ export async function joinPool(
   return loadPoolDTO(poolId)
 }
 
-function joinRejectionMessage(reason: string | undefined): string {
+export function joinRejectionMessage(reason: string | undefined): string {
   switch (reason) {
     case 'pool_not_joinable':     return 'This pool is no longer accepting passengers'
     case 'pool_full':             return 'No seats left in this pool'

@@ -1,6 +1,7 @@
 import { PoolRow, PoolMemberRow } from '../repositories/pool.repo'
 import { UserRow } from '../repositories/user.repo'
 import { ZoneRow } from '../repositories/zone.repo'
+import { OpenRequestRow } from '../repositories/ride.repo'
 
 export interface DriverProfileDTO {
   id: string
@@ -15,6 +16,35 @@ export function toDriverProfileDTO(u: UserRow, zone: ZoneRow | null): DriverProf
     name:        u.name,
     isOnline:    u.is_online,
     currentZone: zone ? { id: zone.id, name: zone.name } : null,
+  }
+}
+
+export interface DriverRequestDTO {
+  rideId: string
+  passengerName: string
+  seats: number
+  pickupZone: { id: number; name: string }
+  destinationZone: { id: number; name: string }
+  requestedAt: string
+  joinable: boolean
+  reason?: string
+}
+
+// No fare fields: a driver never sees what a passenger pays.
+export function toDriverRequestDTO(
+  r: OpenRequestRow,
+  verdict: { ok: boolean; reason?: string },
+  message?: string,
+): DriverRequestDTO {
+  return {
+    rideId:          r.id,
+    passengerName:   r.passenger_name,
+    seats:           r.seats,
+    pickupZone:      { id: r.pickup_zone_id,      name: r.pickup_zone_name      },
+    destinationZone: { id: r.destination_zone_id, name: r.destination_zone_name },
+    requestedAt:     r.created_at,
+    joinable:        verdict.ok,
+    ...(verdict.ok ? {} : { reason: message ?? verdict.reason }),
   }
 }
 

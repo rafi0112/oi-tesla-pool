@@ -145,6 +145,40 @@ export async function setRidePool(
   await tx.query(`UPDATE ride_requests SET pool_id = $2 WHERE id = $1`, [rideId, poolId])
 }
 
+export interface OpenRequestRow {
+  id: string
+  passenger_name: string
+  seats: number
+  pickup_zone_id: number
+  pickup_zone_name: string
+  destination_zone_id: number
+  destination_zone_name: string
+  created_at: string
+}
+
+/** Served by the open_requests_by_zone partial index. */
+export async function findOpenRequestsInZone(zoneId: number): Promise<OpenRequestRow[]> {
+  const { rows } = await db.query<OpenRequestRow>(
+    `SELECT r.id,
+            u.name  AS passenger_name,
+            r.seats,
+            r.pickup_zone_id,
+            pz.name AS pickup_zone_name,
+            r.destination_zone_id,
+            dz.name AS destination_zone_name,
+            r.created_at
+     FROM   ride_requests r
+     JOIN   users u  ON u.id  = r.passenger_id
+     JOIN   zones pz ON pz.id = r.pickup_zone_id
+     JOIN   zones dz ON dz.id = r.destination_zone_id
+     WHERE  r.status = 'REQUESTED'
+       AND  r.pickup_zone_id = $1
+     ORDER  BY r.created_at DESC`,
+    [zoneId],
+  )
+  return rows
+}
+
 export interface BoardingMemberRow {
   id: string
   status: string

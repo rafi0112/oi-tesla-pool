@@ -1,13 +1,18 @@
 import argon2 from 'argon2'
 import { db } from '../../src/db/pool'
+import { config } from '../../src/config'
 import { ZONES, DISTANCES, VEHICLE, SEED_PASSWORD } from '../../src/db/seedData'
 
 export const TEST_PASSWORD = SEED_PASSWORD
 
-/**
- * Wipes every table. Tests own the database outright, so a run clears whatever
- * `npm run seed` left behind — re-seed afterwards if you want the demo data back.
- */
+// Last line of defence: truncation is destructive, so verify the target database
+// really is the test one before touching it, whatever the config says.
+const TARGET = new URL(config.databaseUrl).pathname.replace(/^\//, '')
+if (!TARGET.endsWith('_test')) {
+  throw new Error(`Refusing to truncate "${TARGET}" — tests only run against a _test database`)
+}
+
+/** Wipes every table. Safe: the guard above proves this is the test database. */
 export async function truncateAll(): Promise<void> {
   await db.query(`
     TRUNCATE ride_status_events, pool_status_events, ride_requests, pools,

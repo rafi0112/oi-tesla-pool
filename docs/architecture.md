@@ -89,7 +89,7 @@ erDiagram
         INT origin_zone_id FK
         INT seats_available
         TEXT status
-        BOOLEAN wait_for_pool
+        TIMESTAMPTZ wait_until
         TIMESTAMPTZ created_at
     }
     ride_requests {
@@ -99,6 +99,7 @@ erDiagram
         INT pickup_zone_id FK
         INT destination_zone_id FK
         INT seats
+        INT wait_minutes
         INT quoted_fare_paisa
         INT final_fare_paisa
         TEXT status
@@ -157,8 +158,8 @@ Drivers set their current zone when going online (`PATCH /drivers/me { isOnline:
 **`lat` / `lng` on `zones` and direction alignment check.**
 Zones carry approximate real-world coordinates (NUMERIC(9,6)). `canJoin` uses these to compute the compass bearing from the origin zone to each destination zone via `bearingDeg(from, to)` (a pure `Math.atan2` calculation). If the angle between any two passengers' destination bearings exceeds 90°, the request is rejected with `reason: 'opposite_direction'`. This is an explicit guard on top of the detour-cap check — it produces a clear user-facing message ("Your destination is in the opposite direction") rather than a vague detour error, and it is zero-cost: no map API, no network call.
 
-**`wait_for_pool` on `pools`.**
-When the first passenger's ride is accepted, the driver asks them whether they are willing to wait for a second passenger. `wait_for_pool = false` closes the pool to new joiners immediately — the driver can depart right away. `wait_for_pool = true` opens a 10-minute window during which a second passenger may join. The flag makes the first passenger's preference an explicit datum in the database rather than implicit timing logic.
+**`wait_until` on `pools`, `wait_minutes` on `ride_requests`.**
+Whether a pool waits for more passengers, and for how long, is each passenger's own decision at booking time — never the driver's. `wait_minutes` (0–10) is that passenger's choice. `wait_until` on the pool is derived, not chosen directly: the first accepted request's `wait_minutes` opens it (`null` if 0, closing the pool to new joiners immediately; a future timestamp otherwise), and every later join can only pull that deadline *earlier* — `wait_until = LEAST(wait_until, now + joiner.wait_minutes)` — never later. A joiner with `wait_minutes = 0` has no preference on the question and leaves the clock untouched. `POST /pools/:id/close` clears `wait_until` to `null` outright, so closing a pool means closing it, immediately, regardless of what was left on the clock. See `docs/ASSUMPTIONS.md` #13 for the full reasoning.
 
 **Pool auto-cancellation rule.**
 A passenger may cancel their own ride at any time before boarding (`PICKED_UP`). However:

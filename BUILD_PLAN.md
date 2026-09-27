@@ -147,7 +147,7 @@ A ride request may join an existing pool only when **all six** hold:
 2. `pool.seats_available >= request.seats`
 3. `request.pickup_zone_id === pool.origin_zone_id`
 4. `pooledRouteKm <= max(soloKm of all active members incl. the candidate) + detourCapKm`
-5. `pool.wait_for_pool === true AND now - pool.created_at <= poolWindowMinutes`
+5. `pool.wait_until !== null AND now <= pool.wait_until`
 6. `angleDiff(bearing(origin, existingDest), bearing(origin, newDest)) <= maxBearingDiffDeg`
    for every existing active member — rejects when a destination is in the opposite direction
 
@@ -183,27 +183,32 @@ Gulshan 1 are both roughly south of Banani — bearing diff ≈ 53.8° ≤ 90° 
 and is a pure function. It receives `zones` (a map of id → Zone) in addition to distances.
 `now` defaults to `new Date()`; tests pass it explicitly so condition 5 is deterministic.
 
-The domain types are camelCase (`seatsAvailable`, `originZoneId`, `waitForPool`,
-`createdAt`, `pickupZoneId`) so `src/domain/` never sees a database row shape.
+The domain types are camelCase (`seatsAvailable`, `originZoneId`, `waitUntil`,
+`pickupZoneId`) so `src/domain/` never sees a database row shape.
 `pool.service.ts` maps the row to a `PoolSnapshot` before calling `canJoin`.
 
 Rejection reasons, one per failed condition: `pool_not_joinable`, `pool_full`,
 `different_pickup_zone`, `not_waiting_for_pool`, `pool_window_expired`,
 `opposite_direction`, `detour_too_long`, `no_route`, `unknown_zone`.
 
-**wait_for_pool flag.** When the first passenger's ride is accepted and a pool is
-created, the driver asks the passenger: "Wait for another passenger?"
+**`wait_until` — decided by passengers, never the driver (see E7).** Each
+passenger states `waitMinutes` (0–10) when booking — their own patience, not a
+driver's toggle. `wait_until` on the pool is the earliest deadline any current
+member has asked for:
 
-- `wait_for_pool = false` — condition 5 always fails; no second passenger can join;
-  the driver may start the trip immediately.
-- `wait_for_pool = true` — the standard 10-minute window applies; a second passenger
-  may join if the other four conditions hold.
+- The first passenger's `waitMinutes` opens the pool: 0 creates it `ACCEPTED`
+  with `wait_until = null` (condition 5 always fails, no one else can join,
+  the driver may start the trip immediately); anything above 0 creates it
+  `FORMING` with `wait_until = now + waitMinutes`.
+- Every later join ratchets `wait_until` to `LEAST(wait_until, now + theirWaitMinutes)`
+  if their own `waitMinutes > 0` — it can only move earlier, never later. A
+  joiner whose `waitMinutes` is 0 doesn't touch the clock at all; they simply
+  have no preference on the question.
+- `POST /pools/:id/close` sets `wait_until = null` outright, so a closed pool
+  cannot be joined again even if time was still on the clock.
 
 The first passenger may also cancel their ride entirely if the conditions do not suit
 them (see §3.5 cancellation rules).
-
-**Future feature (not in MVP):** the driver may offer a fare discount to encourage
-the first passenger to set `wait_for_pool = true`. The passenger may still decline.
 
 ### 3.3 State machines
 
@@ -235,8 +240,8 @@ ride transitions to `ride_status_events`.
 
 | Pool status | Entered when |
 |---|---|
-| `FORMING` | Driver accepts first request with `waitForPool: true` — pool assembling, window open |
-| `ACCEPTED` | Driver accepts first request with `waitForPool: false` (immediate); OR driver calls `POST /pools/:id/close` to end the FORMING window |
+| `FORMING` | Driver accepts a first request whose own `waitMinutes > 0` — pool assembling, window open |
+| `ACCEPTED` | Driver accepts a first request whose own `waitMinutes === 0` (immediate); OR driver calls `POST /pools/:id/close` to end the FORMING window early |
 | `DRIVER_ARRIVED` | Driver calls `POST /pools/:id/arrive` |
 | `EN_ROUTE` | Driver calls `POST /pools/:id/start`; all matched rides → `PICKED_UP`, fares locked |
 | `COMPLETED` | Driver calls `POST /pools/:id/complete`; no `PICKED_UP` rides may remain |
@@ -398,10 +403,10 @@ rule: no business logic in controllers.
 - `zones` — id, name
 - `zone_distances` — from_zone_id, to_zone_id, distance_km
 - `pools` — id, vehicle_id, origin_zone_id, seats_available, status,
-  wait_for_pool, created_at
+  wait_until, created_at
 - `ride_requests` — id, passenger_id, pool_id (nullable), pickup_zone_id,
-  destination_zone_id, seats, quoted_fare_paisa, final_fare_paisa, status,
-  idempotency_key. **One row per passenger** — every passenger who joins a pool
+  destination_zone_id, seats, wait_minutes, quoted_fare_paisa, final_fare_paisa,
+  status, idempotency_key. **One row per passenger** — every passenger who joins a pool
   gets their own row, linked via pool_id.
 - `pool_status_events` — id, pool_id, from_status, to_status, actor_user_id,
   reason, created_at. Records pool-level transitions.
@@ -623,6 +628,14 @@ Do not alter this SQL.
 
 Commit: `feat(db): add core schema with seat and active-ride invariants`
 
+> **Amended by `003_passenger_wait_time.sql` (see E7).** `pools.wait_for_pool
+> BOOLEAN` is dropped and replaced with `wait_until TIMESTAMPTZ` (null = not
+> accepting joins; a timestamp = the live deadline). `ride_requests` gains
+> `wait_minutes INT NOT NULL DEFAULT 0 CHECK (wait_minutes BETWEEN 0 AND 10)`
+> — each passenger's own choice at booking time. Migrations are append-only,
+> so 001/002 above are left exactly as originally written; 003 is the record
+> of what changed and why.
+
 ### B5 — Seed
 
 `api/src/db/seed.ts`, fully idempotent (`ON CONFLICT DO NOTHING` / `DO UPDATE`),
@@ -769,7 +782,9 @@ takes `zones: Map<number, Zone>` alongside `distances`. Pure function, no db acc
 Commit: `feat(pool): add same-origin detour-capped direction-aware matching rule`
 
 **E3 — Pool creation**
-`POST /pools` `{ rideRequestId, waitForPool: boolean }` (driver only).
+`POST /pools` `{ rideRequestId }` (driver only). *(Amended by E7: the body no
+longer carries `waitForPool` — the decision is the accepted passenger's own
+`wait_minutes`, read off their ride.)*
 
 Pre-conditions (reject 422/409 otherwise):
 - The request's `pickup_zone_id` must equal `driver.current_zone_id` — driver and
@@ -778,8 +793,8 @@ Pre-conditions (reject 422/409 otherwise):
 
 Creates a pool with:
 - `seats_available = seat_capacity - request.seats`
-- `wait_for_pool` from the body
-- `status = 'FORMING'` if `waitForPool === true`; `status = 'ACCEPTED'` otherwise
+- `wait_until = now + ride.wait_minutes` if `ride.wait_minutes > 0`, else `null`
+- `status = 'FORMING'` if `ride.wait_minutes > 0`; `status = 'ACCEPTED'` otherwise
 - `origin_zone_id = request.pickup_zone_id`
 
 Moves the ride to `MATCHED` with `pool_id` set. All in one transaction; status events
@@ -830,14 +845,60 @@ the join attempt reports `{ ok: false, reason, message }` and the ride simply
 stays `REQUESTED` — the booking is never rolled back or failed because a race
 was lost. The response is `{ ride, joinAttempt? }`.
 
-This is a deliberate policy choice, not just plumbing: `wait_for_pool: true` is
-the first passenger's advance consent to share with a compatible stranger for
-the next 10 minutes, so a second passenger whose route fits does not need the
+This is a deliberate policy choice, not just plumbing: choosing to wait is the
+first passenger's advance consent to share with a compatible stranger for
+however long they said, so a second passenger whose route fits does not need the
 driver to re-approve them one by one. The driver's own accept action (E4) is
 untouched and still the only path when the passenger didn't pick a pool, or
 picked wrong and a human needs to sort it out.
 
 Commit: `feat(pool): let passengers discover and self-join a compatible pool`
+
+**E7 — Passenger-decided, ratcheting wait time**
+
+E3 originally had the *driver* choose `waitForPool: true/false` when accepting
+the first request — a fixed 10-minute window if true. That was never the
+passenger's call to give away: it's their trip, their patience, and their fare
+discount at stake, not the driver's schedule. This step moves the decision
+to where it belongs and makes it a duration, not a coin flip.
+
+`POST /rides` gains `waitMinutes` (0–`POOL_POLICY.maxWaitMinutes`, default 0) —
+offered in the UI as a short list of options (0 / 3 / 5 / 10 min), one passenger
+choice among several, not a binary toggle. `ride_requests.wait_minutes` stores it.
+
+`pools.wait_for_pool BOOLEAN` is replaced by `pools.wait_until TIMESTAMPTZ`
+(migration `003_passenger_wait_time.sql`, see B4's amendment note). It is the
+**earliest** deadline any current member has asked for, and it only ever moves
+earlier:
+
+- **Opening.** E3 sets `wait_until = now + ride.wait_minutes` (or `null` if 0)
+  from the *accepted* passenger's own preference — never a body param the
+  driver supplies.
+- **Ratcheting.** Every join — driver-side (E4) or passenger self-join (E6) —
+  calls `ratchetWaitUntil`, which runs `wait_until = LEAST(wait_until, now +
+  theirWaitMinutes)` when the joining ride's own `wait_minutes > 0`. A joiner
+  who chose 0 has no preference on the question and leaves the clock untouched
+  — they do not slam the window shut on people already waiting.
+  Worked example: Nusrat opens with 5 minutes (`wait_until = t+5`). Two minutes
+  later Rafiq joins asking for 3 (`now + 3 = t+5`, no change since it's not
+  earlier). A minute after that Shirin joins asking for 2 (`now + 2 = t+3`,
+  earlier than `t+5` — the deadline ratchets down to `t+3`). The pool now closes
+  at `t+3`, three minutes after it opened, because the most impatient current
+  member set the pace.
+- **Closing.** `POST /pools/:id/close` now also clears `wait_until` to `null`
+  in the same transaction as the `FORMING → ACCEPTED` transition. This closes a
+  latent gap in the original design: previously, closing only changed `status`,
+  and `canJoin` condition 1 admits `ACCEPTED` pools too, so a pool closed early
+  remained joinable until its original 10-minute mark actually elapsed. Clearing
+  `wait_until` makes "closed" mean closed, immediately.
+
+`canJoin` condition 5 becomes `pool.waitUntil !== null && now <= pool.waitUntil`
+— see §3.2. The driver's request feed and `GET /pools/nearby` both display the
+passenger's own `waitMinutes` / the pool's live countdown; neither offers a
+control to change it, because it isn't the driver's or the browsing passenger's
+decision to make for someone else's booking.
+
+Commit: `feat(pool): let passengers, not drivers, set how long a pool waits`
 
 ---
 
@@ -1000,21 +1061,23 @@ accounts with a one-click fill so the evaluator never has to type.
 Commit: `feat(web): add login screen with seeded demo accounts`
 
 **I3 — Passenger page**
-Booking form: pickup zone, destination zone, seats; a live quote (debounced
-`/rides/quote`) showing solo and pooled fare before booking.
+Booking form: pickup zone, destination zone, seats, and **"how long can you
+wait?"** (`waitMinutes`: a segmented control offering 0 / 3 / 5 / 10 minutes —
+see E7; this is the passenger's own decision, never the driver's); a live quote
+(debounced `/rides/quote`) showing solo and pooled fare before booking.
 
 **"Riders already heading this way" (E6).** Once destination and seats are
 chosen, `GET /pools/nearby` is polled every 4 seconds alongside the quote. Every
-returned pool is shown, joinable or not: a joinable one is a selectable row with
-the driver's name, seats left, and a live countdown to the window closing; an
-unjoinable one is shown disabled with the plain-language reason instead of being
-hidden. "Book my own pool" is the default, always-selectable choice. Picking a
-pool changes the submit label to "Join pool & request" and sends its id as
-`poolId` on `POST /rides`; the response's `joinAttempt` (present only when a
-`poolId` was sent) drives a one-line banner after booking — success, or the
-reason it didn't work, with the booking itself always having gone through
-regardless. If a poll shows the selected pool has filled or closed, the choice
-silently reverts to "book my own" rather than submitting a stale one.
+returned pool is shown, joinable or not: a joinable one has its own **Join**
+button, the driver's name, seats left, and a live countdown to the window
+closing; an unjoinable one is shown disabled with the plain-language reason
+instead of being hidden. Clicking a row's Join button books with that pool's id
+as `poolId` on `POST /rides`, alongside the passenger's own `waitMinutes` (which
+can still ratchet the *already-open* pool's deadline down — see E7). The main
+**Request Bullet** button, always present below, books independently with no
+`poolId`. The response's `joinAttempt` (present only when a `poolId` was sent)
+drives a one-line banner after booking — success, or the reason it didn't work,
+with the booking itself always having gone through regardless.
 
 Once a ride is active, the same page shows a status timeline
 (`REQUESTED → MATCHED → PICKED_UP → DROPPED_OFF`), the current fare, the driver and
@@ -1031,9 +1094,11 @@ Commit: `feat(web): add passenger booking, ride tracking and past rides history`
 **I4 — Driver page**
 Online/offline toggle with a **zone selector** (required when going online; dropdown
 of all zones from `GET /zones`). Open request feed — only shows rides in the driver's
-current zone. Each request has an Accept button — disabled with the reason shown when
-`joinable` is false. When accepting the **first** request, a "Wait for another
-passenger?" toggle (yes/no, default no) sets `waitForPool` in the `POST /pools` body.
+current zone. Each request shows the passenger's own `waitMinutes` ("will wait 5 min"
+/ "won't wait for others") and has an Accept button — disabled with the reason shown
+when `joinable` is false. There is no wait toggle here: whether a new pool waits, and
+for how long, was already decided by the passenger at booking time (E7), not by the
+driver accepting them.
 
 Active pool panel shows:
 - Pool status badge and seats remaining out of capacity

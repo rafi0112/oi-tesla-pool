@@ -5,10 +5,11 @@ Each is implemented consistently throughout the codebase and seed data.
 
 1. **Joining a pool is allowed only while it is `FORMING` or `ACCEPTED` — never after
    the driver has arrived or the trip has started.**
-   `FORMING` is the assembling phase (driver accepted first passenger, window open for
-   more). `ACCEPTED` is the closed-and-ready phase (driver explicitly closed the pool
-   via `POST /pools/:id/close`, or created it with `waitForPool: false`). Once the
-   pool moves to `DRIVER_ARRIVED` or beyond, the passenger count is fixed.
+   `FORMING` is the assembling phase (the accepted passenger's own `wait_minutes` was
+   above 0, opening a window). `ACCEPTED` is the closed-and-ready phase (that passenger
+   chose `wait_minutes: 0`, or the driver explicitly closed the pool via
+   `POST /pools/:id/close`). Once the pool moves to `DRIVER_ARRIVED` or beyond, the
+   passenger count is fixed. See assumption 13 for who decides the wait and how.
 
 2. **Same pickup zone is mandatory; driver must also be in that zone.**
    The brief uses named areas without street addresses. Matching on zone is the
@@ -21,10 +22,14 @@ Each is implemented consistently throughout the codebase and seed data.
    A percentage cap would be unreasonable on short trips — 20% of a 2 km trip is only
    400 m, which would reject almost every pooling attempt in a dense city.
 
-4. **The pooling window is 10 minutes from pool creation.**
-   A request that arrives more than 10 minutes after the pool opened is likely headed
-   to a different destination by a different route; a hard window keeps matching
-   deterministic without real-time traffic data.
+4. **The pooling window is chosen by the passenger, capped at 10 minutes, and only
+   ever ratchets earlier as more people join.**
+   Originally a fixed 10 minutes set by the driver. Reworked in assumption 13: each
+   passenger states 0–10 minutes of their own patience at booking time, and the pool's
+   live deadline is the earliest any current member asked for. 10 minutes remains the
+   outer cap — a request arriving after everyone currently aboard has stopped waiting
+   is likely headed to a different destination by a different route, so a hard ceiling
+   keeps matching deterministic without real-time traffic data.
 
 5. **Fare is quoted at booking time using the solo fare.**
    The passenger needs a price before a pool exists. The displayed fare is recomputed
@@ -89,26 +94,47 @@ Each is implemented consistently throughout the codebase and seed data.
     This is an explicit guard in addition to the detour-cap check — the two together
     catch wrong-direction routes both geometrically and by actual driving distance.
 
-13. **A passenger may self-join a pool the driver already opened to waiting — this
-    does not require the driver's per-passenger approval.**
-    `wait_for_pool: true` is the first passenger's advance consent to share the
-    vehicle with anyone compatible for the next 10 minutes. `GET /pools/nearby`
-    surfaces those pools before booking, and `POST /rides { poolId }` runs the
-    same atomic claim the driver's own accept action uses (§3.4), just with the
-    passenger as the actor instead of the driver. `canJoin` is still the sole
-    arbiter — a passenger can no more force their way into an incompatible pool
-    this way than the driver could. The driver's explicit accept (E4) remains
-    the only path when the passenger booked blind or picked wrong; nothing about
-    it changed.
+13. **Whether a pool waits, and for how long, is decided by the passengers who join
+    it — never by the driver — and the deadline only ever moves earlier.**
+    Every booking carries its own `wait_minutes` (0–10, offered as a short list of
+    options, not a yes/no toggle): how long *that passenger* is willing to have the
+    pool wait for more riders. The pool's `wait_until` is derived from this, never
+    set directly: the first accepted request's `wait_minutes` opens it (`null`, i.e.
+    closed to new joiners, if 0), and every later join ratchets it down —
+    `wait_until = LEAST(wait_until, now + joiner.wait_minutes)` — if that joiner's own
+    preference is above 0. A joiner who chose 0 has no opinion on the question and
+    leaves the clock untouched; they don't get to slam the window shut on people who
+    are already waiting. Concretely: Nusrat opens with 5 minutes; two minutes later
+    Rafiq joins asking for 3, which computed from *his* join moment is later than
+    Nusrat's original deadline, so nothing changes; a minute after that Shirin joins
+    asking for 2, which *is* earlier, so the pool now closes 3 minutes after it
+    opened — set by whoever aboard has the least patience at any given moment.
+    `POST /pools/:id/close` clears `wait_until` to `null` outright in the same
+    transaction as its status change, so closing early actually stops joins
+    immediately rather than leaving the original deadline enforceable underneath.
+
+    This was a deliberate reversal of the MVP's first design, where the driver
+    supplied `waitForPool: true/false` when accepting the first request. That gave
+    the driver a say over a passenger's own fare discount and patience — this is the
+    passenger's trip and their money, not a schedule the driver sets for them.
+
+    A passenger may self-join a pool this way without the driver's per-passenger
+    approval: `GET /pools/nearby` surfaces joinable pools before booking, and
+    `POST /rides { poolId }` runs the same atomic claim the driver's own accept
+    action uses (§3.4), just with the passenger as the actor. `canJoin` is still the
+    sole arbiter — a passenger can no more force their way into an incompatible pool
+    this way than the driver could. The driver's explicit accept (E4) remains the
+    only path when the passenger booked blind or picked wrong; nothing about it
+    changed.
 
     **The listing is narrower than `canJoin` condition 1 allows.** `canJoin` treats
     `FORMING` and `ACCEPTED` alike (assumption 1), but `GET /pools/nearby` only
-    ever lists `FORMING` pools. An `ACCEPTED` pool got there either because the
-    driver never opened a window (`waitForPool: false`) or explicitly closed one
-    (`POST /pools/:id/close`) — in both cases "still assembling" is the wrong
-    signal to show a browsing passenger, even though the rule would technically
-    still admit them within the 10-minute clock. Self-service discovery is
-    deliberately more conservative than the rule's outer bound.
+    ever lists `FORMING` pools. Every `ACCEPTED` pool has `wait_until = null` —
+    either the accepted passenger chose `wait_minutes: 0` at creation, or the
+    driver closed the pool (which now clears `wait_until` too) — so "still
+    assembling" would be the wrong signal regardless; condition 5 would refuse
+    them anyway. Self-service discovery is deliberately explicit about this
+    rather than relying on condition 5 to filter it out silently.
 
     **A failed or lost-race join never fails the booking.** The ride request and
     the pool join are two different questions: if the join loses a race (seats

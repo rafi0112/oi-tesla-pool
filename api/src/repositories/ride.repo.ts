@@ -62,12 +62,23 @@ function mapRide(r: RawRideRow): RideRow {
   }
 }
 
-export async function findRideById(id: string, passengerId?: string): Promise<RideRow | null> {
+/**
+ * Anything that can run a query — the shared pool, or a transaction client.
+ * A row written inside an open transaction is invisible to the pool, so reads
+ * that must see uncommitted writes have to pass the client through.
+ */
+type Queryable = Pick<PoolClient, 'query'>
+
+export async function findRideById(
+  id: string,
+  passengerId?: string,
+  exec: Queryable = db as unknown as Queryable,
+): Promise<RideRow | null> {
   const where = passengerId
     ? `WHERE r.id = $1 AND r.passenger_id = $2`
     : `WHERE r.id = $1`
   const params = passengerId ? [id, passengerId] : [id]
-  const { rows } = await db.query<RawRideRow>(`${SELECT_RIDE} ${where}`, params)
+  const { rows } = await exec.query<RawRideRow>(`${SELECT_RIDE} ${where}`, params)
   return rows[0] ? mapRide(rows[0]) : null
 }
 
@@ -105,8 +116,10 @@ export async function createRide(
      RETURNING id`,
     [data.passengerId, data.pickupZoneId, data.destinationZoneId, data.seats, data.quotedFarePaisa, data.idempotencyKey],
   )
-  const ride = await findRideById(rows[0].id)
-  return ride!
+  // Read back through the same client — the insert is not committed yet.
+  const ride = await findRideById(rows[0].id, undefined, tx)
+  if (!ride) throw new Error('inserted ride could not be read back')
+  return ride
 }
 
 export interface RideCoreRow {

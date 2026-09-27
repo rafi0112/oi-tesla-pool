@@ -88,6 +88,9 @@
     @apply bg-paper text-ink font-display;
     font-optical-sizing: auto;
     min-height: 100dvh;
+    /* Decorative motion (the stamp's slam, glows) must never widen the page.
+       clip, not hidden: it creates no scroll container, so sticky still works. */
+    overflow-x: clip;
   }
 
   :focus-visible {

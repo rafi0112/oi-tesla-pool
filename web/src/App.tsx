@@ -2,6 +2,7 @@ import { BrowserRouter, Route, Routes } from 'react-router'
 import { AuthProvider } from './context/AuthContext'
 import { AppHeader, ProtectedRoute, RootRedirect } from './components/Chrome'
 import { Login } from './pages/Login'
+import { PassengerHome } from './pages/PassengerHome'
 
 export function App() {
   return (
@@ -11,7 +12,7 @@ export function App() {
           <Route path="/login" element={<Login />} />
           <Route
             path="/passenger"
-            element={<ProtectedRoute role="PASSENGER"><PagePending sub="Passenger" title="Passenger home" /></ProtectedRoute>}
+            element={<ProtectedRoute role="PASSENGER"><PassengerHome /></ProtectedRoute>}
           />
           <Route
             path="/driver"

@@ -76,6 +76,52 @@ function toSnapshot(pool: PoolRow, members: PoolMemberRow[]): PoolSnapshot {
   }
 }
 
+/**
+ * If this pool is still marked FORMING but its wait deadline has already
+ * passed, closes it automatically — the passenger-chosen wait time running out
+ * is what triggers FORMING → ACCEPTED, not a driver clicking anything. No
+ * human acted, so the event is logged with a null actor. Re-checks status
+ * under the row lock, so a manual close racing an expiry — or two concurrent
+ * callers hitting this at once — can't double-transition or throw.
+ */
+async function autoCloseIfExpired(
+  poolId: string,
+  status: string,
+  waitUntil: string | null,
+): Promise<void> {
+  if (status !== 'FORMING' || waitUntil === null) return
+  if (new Date(waitUntil).getTime() > Date.now()) return
+
+  await withTransaction(async tx => {
+    const locked = await lockPoolById(tx, poolId)
+    if (!locked || locked.status !== 'FORMING') return
+    await transitionPool(tx, locked, 'ACCEPTED', null, 'wait_time_elapsed')
+    await clearWaitUntil(tx, poolId)
+  })
+}
+
+/**
+ * Fetches a pool, auto-closing it first if its wait time just elapsed, so
+ * every caller sees the true current status rather than a FORMING that would
+ * have flipped on its own the moment anyone looked. Every read of a pool by id
+ * anywhere in this file goes through one of these two wrappers rather than
+ * calling the repo directly, specifically so nothing can act on a stale row.
+ */
+async function findPoolFresh(poolId: string): Promise<PoolRow | null> {
+  const pool = await findPoolById(poolId)
+  if (!pool) return null
+  await autoCloseIfExpired(pool.id, pool.status, pool.wait_until)
+  return (await findPoolById(poolId)) ?? pool
+}
+
+/** Same, but ownership-scoped — preserves the 404-not-403 semantics for driver actions. */
+async function findPoolFreshForDriver(poolId: string, driverId: string): Promise<PoolRow | null> {
+  const pool = await findPoolByIdForDriver(poolId, driverId)
+  if (!pool) return null
+  await autoCloseIfExpired(pool.id, pool.status, pool.wait_until)
+  return (await findPoolByIdForDriver(poolId, driverId)) ?? pool
+}
+
 export async function createPool(
   driverId: string,
   data: z.infer<typeof createPoolSchema>,
@@ -191,7 +237,7 @@ export async function joinPool(
   poolId: string,
   data: z.infer<typeof joinPoolSchema>,
 ): Promise<DriverPoolDTO> {
-  const pool = await findPoolByIdForDriver(poolId, driverId)
+  const pool = await findPoolFreshForDriver(poolId, driverId)
   if (!pool) throw new NotFoundError('Pool not found')
 
   const ride = await findRideById(data.rideRequestId)
@@ -242,7 +288,7 @@ export async function attemptSelfJoin(
   poolId: string,
   rideId: string,
 ): Promise<JoinAttempt> {
-  const pool = await findPoolById(poolId)
+  const pool = await findPoolFresh(poolId)
   if (!pool) return { ok: false, reason: 'pool_not_found', message: 'That pool is no longer available' }
 
   const ride = await findRideById(rideId, passengerId)
@@ -287,6 +333,13 @@ export async function findNearbyPools(
   destinationZoneId: number,
   seats: number,
 ): Promise<PoolOptionDTO[]> {
+  const candidates = await findFormingPoolsByOriginZone(pickupZoneId)
+  if (candidates.length === 0) return []
+
+  // A candidate's wait time may have elapsed since it was last touched — close
+  // it now rather than advertise a FORMING pool that canJoin would refuse
+  // anyway, then re-query so the closed ones drop out naturally.
+  await Promise.all(candidates.map(p => autoCloseIfExpired(p.id, p.status, p.wait_until)))
   const pools = await findFormingPoolsByOriginZone(pickupZoneId)
   if (pools.length === 0) return []
 
@@ -326,7 +379,7 @@ async function transitionOwnedPool(
   poolId: string,
   next: string,
 ): Promise<DriverPoolDTO> {
-  const owned = await findPoolByIdForDriver(poolId, driverId)
+  const owned = await findPoolFreshForDriver(poolId, driverId)
   if (!owned) throw new NotFoundError('Pool not found')
 
   await withTransaction(async tx => {
@@ -345,7 +398,7 @@ async function transitionOwnedPool(
  * would make "closed" a lie.
  */
 export async function closePool(driverId: string, poolId: string): Promise<DriverPoolDTO> {
-  const owned = await findPoolByIdForDriver(poolId, driverId)
+  const owned = await findPoolFreshForDriver(poolId, driverId)
   if (!owned) throw new NotFoundError('Pool not found')
 
   await withTransaction(async tx => {
@@ -409,8 +462,10 @@ export async function completeTrip(driverId: string, poolId: string): Promise<Dr
 }
 
 export async function getActivePool(driverId: string): Promise<DriverPoolDTO | null> {
-  const pool = await findActivePoolByDriver(driverId)
-  if (!pool) return null
+  const found = await findActivePoolByDriver(driverId)
+  if (!found) return null
+  await autoCloseIfExpired(found.id, found.status, found.wait_until)
+  const pool = (await findActivePoolByDriver(driverId)) ?? found
   const members = await findPoolMembers(pool.id)
   return toDriverPoolDTO(pool, members)
 }
@@ -445,7 +500,7 @@ export async function startTrip(driverId: string, poolId: string): Promise<Drive
 }
 
 export async function loadPoolDTO(poolId: string): Promise<DriverPoolDTO> {
-  const pool = await findPoolById(poolId)
+  const pool = await findPoolFresh(poolId)
   if (!pool) throw new NotFoundError('Pool not found')
   const members = await findPoolMembers(poolId)
   return toDriverPoolDTO(pool, members)

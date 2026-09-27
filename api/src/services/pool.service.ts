@@ -168,7 +168,10 @@ export async function joinPool(
     ctx.distances,
   )
   if (!verdict.ok) {
-    throw new ConflictError('NOT_JOINABLE', joinRejectionMessage(verdict.reason), {
+    // §3.6 assigns POOL_FULL to "no seats left", so report that code whether the
+    // shortage was seen here or by the atomic claim losing a race below.
+    const code = verdict.reason === 'pool_full' ? 'POOL_FULL' : 'NOT_JOINABLE'
+    throw new ConflictError(code, joinRejectionMessage(verdict.reason), {
       reason: verdict.reason,
     })
   }

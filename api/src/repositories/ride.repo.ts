@@ -73,6 +73,34 @@ export async function createRide(
   return ride!
 }
 
+export interface RideCoreRow {
+  id: string
+  passenger_id: string
+  pool_id: string | null
+  pickup_zone_id: number
+  destination_zone_id: number
+  seats: number
+  status: string
+}
+
+/**
+ * Locks the ride row for the rest of the transaction. Concurrent attempts to
+ * move the same ride serialise here, so a double-submit cannot claim seats twice.
+ */
+export async function lockRideById(
+  tx: PoolClient,
+  id: string,
+): Promise<RideCoreRow | null> {
+  const { rows } = await tx.query<RideCoreRow>(
+    `SELECT id, passenger_id, pool_id, pickup_zone_id, destination_zone_id, seats, status
+     FROM   ride_requests
+     WHERE  id = $1
+     FOR UPDATE`,
+    [id],
+  )
+  return rows[0] ?? null
+}
+
 export async function updateRideStatus(
   tx: PoolClient,
   rideId: string,

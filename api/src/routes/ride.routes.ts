@@ -6,6 +6,7 @@ import {
   getMyRidesHandler, getRideByIdHandler, cancelRideHandler,
 } from '../controllers/ride.controller'
 import { getAllZones } from '../repositories/zone.repo'
+import { toZoneDTO } from '../dto/zone.dto'
 import { authenticate } from '../middleware/auth'
 import { requireRole } from '../middleware/requireRole'
 
@@ -14,7 +15,7 @@ const router = Router()
 router.get('/zones', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const zones = await getAllZones()
-    res.json({ zones })
+    res.json({ zones: zones.map(toZoneDTO) })
   } catch (err) {
     next(err)
   }

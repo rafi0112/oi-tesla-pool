@@ -15,6 +15,8 @@ export interface PassengerRideDTO {
   destinationZone: { id: number; name: string }
   seats: number
   poolId: string | null
+  /** Populated once matched. Never carries a co-passenger's details. */
+  driver: { name: string; vehicle: string } | null
   sharedWith: number
   canCancel: boolean
   createdAt: string
@@ -69,6 +71,9 @@ export function toPassengerRideDTO(r: RideRow): PassengerRideDTO {
     destinationZone:  { id: r.destination_zone_id, name: r.destination_zone_name },
     seats:            r.seats,
     poolId:           r.pool_id,
+    driver:           r.driver_name && r.vehicle_name
+                        ? { name: r.driver_name, vehicle: r.vehicle_name }
+                        : null,
     sharedWith:       r.shared_with,
     canCancel:        canTransition('ride', r.status, 'CANCELLED'),
     createdAt:        r.created_at,

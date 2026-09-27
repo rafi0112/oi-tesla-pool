@@ -19,6 +19,9 @@ export interface RideRow {
   distance_km: number | null
   /** Other active bookings sharing this ride's pool — excludes this row. */
   shared_with: number
+  /** Null until the ride is matched to a pool. */
+  driver_name: string | null
+  vehicle_name: string | null
 }
 
 // distance_km is NUMERIC and shared_with is a COUNT, both of which pg hands back
@@ -33,6 +36,8 @@ const SELECT_RIDE = `
          pz.name AS pickup_zone_name,
          dz.name AS destination_zone_name,
          zd.distance_km,
+         drv.name AS driver_name,
+         veh.name AS vehicle_name,
          (SELECT COUNT(*)
             FROM ride_requests peer
            WHERE peer.pool_id = r.pool_id
@@ -44,6 +49,9 @@ const SELECT_RIDE = `
   LEFT JOIN zone_distances zd
          ON zd.from_zone_id = r.pickup_zone_id
         AND zd.to_zone_id   = r.destination_zone_id
+  LEFT JOIN pools    pl  ON pl.id  = r.pool_id
+  LEFT JOIN vehicles veh ON veh.id = pl.vehicle_id
+  LEFT JOIN users    drv ON drv.id = veh.driver_id
 `
 
 function mapRide(r: RawRideRow): RideRow {

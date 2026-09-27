@@ -26,6 +26,9 @@ export const createRideSchema = z.object({
   pickupZoneId:      z.number().int().positive(),
   destinationZoneId: z.number().int().positive(),
   seats:             z.number().int().min(1).max(POOL_POLICY.maxSeatsPerBooking),
+  // How long this passenger is willing to have a pool wait for more riders —
+  // their own decision, never the driver's. 0 means "don't wait for anyone".
+  waitMinutes:       z.number().int().min(0).max(POOL_POLICY.maxWaitMinutes).default(0),
   // Set when the passenger chose "Join this pool" from GET /pools/nearby
   // instead of booking independently.
   poolId:            z.string().uuid().optional(),
@@ -65,6 +68,7 @@ export async function requestRide(
         pickupZoneId:      data.pickupZoneId,
         destinationZoneId: data.destinationZoneId,
         seats:             data.seats,
+        waitMinutes:       data.waitMinutes,
         quotedFarePaisa,
         idempotencyKey,
       }),

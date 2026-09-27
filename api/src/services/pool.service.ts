@@ -15,6 +15,8 @@ import {
   createPool as insertPool,
   claimSeats,
   lockPoolById,
+  ratchetWaitUntil,
+  clearWaitUntil,
   PoolRow,
   PoolMemberRow,
 } from '../repositories/pool.repo'
@@ -30,7 +32,6 @@ import { ConflictError, NotFoundError, ValidationError } from '../errors'
 
 export const createPoolSchema = z.object({
   rideRequestId: z.string().uuid(),
-  waitForPool:   z.boolean(),
 })
 
 export const joinPoolSchema = z.object({
@@ -64,8 +65,7 @@ function toSnapshot(pool: PoolRow, members: PoolMemberRow[]): PoolSnapshot {
     status:         pool.status,
     seatsAvailable: pool.seats_available,
     originZoneId:   pool.origin_zone_id,
-    waitForPool:    pool.wait_for_pool,
-    createdAt:      new Date(pool.created_at),
+    waitUntil:      pool.wait_until === null ? null : new Date(pool.wait_until),
     members: members
       .filter(m => ACTIVE_MEMBER_STATUSES.has(m.status))
       .map(m => ({
@@ -105,7 +105,12 @@ export async function createPool(
     throw new ConflictError('POOL_FULL', 'That request needs more seats than the vehicle has')
   }
 
-  const status = data.waitForPool ? 'FORMING' : 'ACCEPTED'
+  // The deciding vote is the passenger's own, cast at booking time — the
+  // driver accepting the request no longer chooses whether it waits.
+  const status = ride.wait_minutes > 0 ? 'FORMING' : 'ACCEPTED'
+  const waitUntil = ride.wait_minutes > 0
+    ? new Date(Date.now() + ride.wait_minutes * 60_000)
+    : null
 
   let poolId: string
   try {
@@ -115,7 +120,7 @@ export async function createPool(
         originZoneId:   ride.pickup_zone_id,
         seatsAvailable: vehicle.seat_capacity - ride.seats,
         status,
-        waitForPool:    data.waitForPool,
+        waitUntil,
       })
 
       // Pool creation has no prior status, so it is logged directly rather than
@@ -148,9 +153,11 @@ export async function createPool(
  * The atomic core shared by every path that joins a ride to a pool: lock pool
  * before ride (matching every other path that locks both, so nothing can
  * deadlock against it), assert the transition, claim the seat, attach and
- * transition the ride. Throws NotFoundError / ConflictError on failure — callers
- * decide whether that means the whole request fails (driver's explicit accept)
- * or is caught and reported as a soft failure (a passenger's best-effort self-join).
+ * transition the ride, then let the newcomer's own patience shorten — never
+ * lengthen — how much longer the pool stays open. Throws NotFoundError /
+ * ConflictError on failure — callers decide whether that means the whole
+ * request fails (driver's explicit accept) or is caught and reported as a
+ * soft failure (a passenger's best-effort self-join).
  */
 async function runAtomicJoin(actorId: string, poolId: string, rideId: string): Promise<void> {
   await withTransaction(async tx => {
@@ -170,6 +177,12 @@ async function runAtomicJoin(actorId: string, poolId: string, rideId: string): P
 
     await setRidePool(tx, locked.id, poolId)
     await transitionRide(tx, locked, 'MATCHED', actorId)
+
+    // A wait_minutes of 0 means "no preference of my own" — it neither opens
+    // nor shortens the window; it simply doesn't speak to the question.
+    if (locked.wait_minutes > 0) {
+      await ratchetWaitUntil(tx, poolId, new Date(Date.now() + locked.wait_minutes * 60_000))
+    }
   })
 }
 
@@ -325,9 +338,24 @@ async function transitionOwnedPool(
   return loadPoolDTO(poolId)
 }
 
-/** Ends the assembling window. The transition table refuses a non-FORMING pool. */
-export function closePool(driverId: string, poolId: string): Promise<DriverPoolDTO> {
-  return transitionOwnedPool(driverId, poolId, 'ACCEPTED')
+/**
+ * Ends the assembling window early. The transition table refuses a non-FORMING
+ * pool. wait_until is cleared in the same transaction — otherwise a pool closed
+ * with time still on the clock would remain joinable until it elapsed, which
+ * would make "closed" a lie.
+ */
+export async function closePool(driverId: string, poolId: string): Promise<DriverPoolDTO> {
+  const owned = await findPoolByIdForDriver(poolId, driverId)
+  if (!owned) throw new NotFoundError('Pool not found')
+
+  await withTransaction(async tx => {
+    const pool = await lockPoolById(tx, poolId)
+    if (!pool) throw new NotFoundError('Pool not found')
+    await transitionPool(tx, pool, 'ACCEPTED', driverId)
+    await clearWaitUntil(tx, poolId)
+  })
+
+  return loadPoolDTO(poolId)
 }
 
 export function markArrived(driverId: string, poolId: string): Promise<DriverPoolDTO> {

@@ -29,6 +29,8 @@ export interface DriverRequestDTO {
   rideId: string
   passengerName: string
   seats: number
+  /** The passenger's own choice — the driver no longer decides this. */
+  waitMinutes: number
   pickupZone: { id: number; name: string }
   destinationZone: { id: number; name: string }
   requestedAt: string
@@ -46,6 +48,7 @@ export function toDriverRequestDTO(
     rideId:          r.id,
     passengerName:   r.passenger_name,
     seats:           r.seats,
+    waitMinutes:     r.wait_minutes,
     pickupZone:      { id: r.pickup_zone_id,      name: r.pickup_zone_name      },
     destinationZone: { id: r.destination_zone_id, name: r.destination_zone_name },
     requestedAt:     r.created_at,
@@ -60,7 +63,8 @@ export interface DriverPoolDTO {
   seatsAvailable: number
   seatCapacity: number
   originZone: { id: number; name: string }
-  waitForPool: boolean
+  /** Null: no one aboard is waiting for more. A timestamp: the live deadline. */
+  waitUntil: string | null
   createdAt: string
   passengers: DriverPassengerDTO[]
 }
@@ -82,7 +86,7 @@ export function toDriverPoolDTO(pool: PoolRow, members: PoolMemberRow[]): Driver
     seatsAvailable: pool.seats_available,
     seatCapacity:   pool.seat_capacity,
     originZone:     { id: pool.origin_zone_id, name: pool.origin_zone_name },
-    waitForPool:    pool.wait_for_pool,
+    waitUntil:      pool.wait_until,
     createdAt:      pool.created_at,
     passengers:     members.map(toDriverPassengerDTO),
   }

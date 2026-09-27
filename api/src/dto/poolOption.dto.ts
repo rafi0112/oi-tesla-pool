@@ -1,5 +1,4 @@
 import { PoolRow } from '../repositories/pool.repo'
-import { POOL_POLICY } from '../domain/matching'
 
 export interface PoolOptionDTO {
   id: string
@@ -21,8 +20,12 @@ export function toPoolOptionDTO(
   verdict: { ok: boolean; reason?: string },
   message: string | undefined,
 ): PoolOptionDTO {
-  const closesAt = new Date(pool.created_at).getTime() + POOL_POLICY.poolWindowMinutes * 60_000
-  const windowClosesInSeconds = Math.max(0, Math.round((closesAt - Date.now()) / 1000))
+  // A pool this function sees is FORMING (only findFormingPoolsByOriginZone
+  // feeds it), so wait_until is always set — but a defensive fallback to 0
+  // costs nothing and keeps the type honest.
+  const windowClosesInSeconds = pool.wait_until === null
+    ? 0
+    : Math.max(0, Math.round((new Date(pool.wait_until).getTime() - Date.now()) / 1000))
 
   return {
     id:             pool.id,

@@ -1,6 +1,9 @@
 export const POOL_POLICY = {
   detourCapKm:       3.0,
-  poolWindowMinutes: 10,
+  // The most any single passenger may ask the pool to wait. Not a fixed window
+  // any more — each passenger states their own patience (waitMinutes), and the
+  // pool's actual deadline is the earliest of everyone who has joined so far.
+  maxWaitMinutes:    10,
   maxBearingDiffDeg: 90,
   // Upper sanity bound for a booking — the binding limit is the vehicle's own
   // seat_capacity, checked at pool creation and again on every join.
@@ -24,8 +27,11 @@ export interface PoolSnapshot {
   status: string
   seatsAvailable: number
   originZoneId: number
-  waitForPool: boolean
-  createdAt: Date
+  // Null means the pool is not (or no longer) accepting new joins at all —
+  // either nobody aboard asked to wait, or the driver closed it early. A
+  // timestamp is the earliest deadline any current member has asked for; it
+  // only ever moves earlier as passengers with shorter patience join in.
+  waitUntil: Date | null
   members: PoolMember[]
 }
 
@@ -127,12 +133,12 @@ export function canJoin(
     return { ok: false, reason: 'different_pickup_zone' }
   }
 
-  // 5 — the first passenger agreed to wait, and the window is still open
-  if (!pool.waitForPool) {
+  // 5 — somebody currently aboard is still willing to wait, and their deadline
+  // (the earliest any member has asked for) has not passed yet
+  if (pool.waitUntil === null) {
     return { ok: false, reason: 'not_waiting_for_pool' }
   }
-  const elapsedMinutes = (now.getTime() - pool.createdAt.getTime()) / 60_000
-  if (elapsedMinutes > POOL_POLICY.poolWindowMinutes) {
+  if (now.getTime() > pool.waitUntil.getTime()) {
     return { ok: false, reason: 'pool_window_expired' }
   }
 

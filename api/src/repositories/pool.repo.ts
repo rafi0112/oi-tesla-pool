@@ -13,7 +13,9 @@ export interface PoolRow {
   vehicle_name: string
   driver_name: string
   status: string
-  wait_for_pool: boolean
+  // Null: not accepting new joins. A timestamp: the live deadline — the
+  // earliest wait any current member asked for, ratcheted down as more join.
+  wait_until: string | null
   created_at: string
 }
 
@@ -80,8 +82,9 @@ export async function findActivePoolByDriver(driverId: string): Promise<PoolRow 
 /**
  * FORMING pools open in this pickup zone — candidates a passenger booking from
  * here could self-join. Deliberately excludes ACCEPTED: that status means the
- * driver either never opened a window (waitForPool false) or explicitly closed
- * one (POST /pools/:id/close), and either way is not "still assembling".
+ * pool either never had anyone ask to wait (wait_until null from the start)
+ * or was explicitly closed (POST /pools/:id/close), and either way is not
+ * "still assembling".
  */
 export async function findFormingPoolsByOriginZone(zoneId: number): Promise<PoolRow[]> {
   const { rows } = await db.query<PoolRow>(
@@ -120,14 +123,14 @@ export async function createPool(
     originZoneId: number
     seatsAvailable: number
     status: string
-    waitForPool: boolean
+    waitUntil: Date | null
   },
 ): Promise<string> {
   const { rows } = await tx.query<{ id: string }>(
-    `INSERT INTO pools (vehicle_id, origin_zone_id, seats_available, status, wait_for_pool)
+    `INSERT INTO pools (vehicle_id, origin_zone_id, seats_available, status, wait_until)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING id`,
-    [data.vehicleId, data.originZoneId, data.seatsAvailable, data.status, data.waitForPool],
+    [data.vehicleId, data.originZoneId, data.seatsAvailable, data.status, data.waitUntil],
   )
   return rows[0].id
 }
@@ -154,6 +157,31 @@ export async function updatePoolStatus(
   status: string,
 ): Promise<void> {
   await tx.query(`UPDATE pools SET status = $2 WHERE id = $1`, [poolId, status])
+}
+
+/**
+ * A joining passenger's own wait preference can only shorten the pool's
+ * deadline, never extend it — LEAST() keeps whichever of the current deadline
+ * or this candidate comes first. Call only while the pool is FORMING; by the
+ * time a join reaches here canJoin has already confirmed wait_until is set.
+ */
+export async function ratchetWaitUntil(
+  tx: PoolClient,
+  poolId: string,
+  candidate: Date,
+): Promise<void> {
+  await tx.query(
+    `UPDATE pools
+        SET wait_until = LEAST(wait_until, $2)
+      WHERE id = $1
+        AND status = 'FORMING'`,
+    [poolId, candidate],
+  )
+}
+
+/** Ends the assembling window immediately — no further joins, whatever the clock says. */
+export async function clearWaitUntil(tx: PoolClient, poolId: string): Promise<void> {
+  await tx.query(`UPDATE pools SET wait_until = NULL WHERE id = $1`, [poolId])
 }
 
 /**

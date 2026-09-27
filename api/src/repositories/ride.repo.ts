@@ -10,6 +10,8 @@ export interface RideRow {
   destination_zone_id: number
   destination_zone_name: string
   seats: number
+  /** Minutes this passenger is willing to have the pool wait for more riders. */
+  wait_minutes: number
   quoted_fare_paisa: number
   final_fare_paisa: number | null
   status: string
@@ -105,16 +107,20 @@ export async function createRide(
     pickupZoneId: number
     destinationZoneId: number
     seats: number
+    waitMinutes: number
     quotedFarePaisa: number
     idempotencyKey: string | null
   },
 ): Promise<RideRow> {
   const { rows } = await tx.query<{ id: string }>(
     `INSERT INTO ride_requests
-       (passenger_id, pickup_zone_id, destination_zone_id, seats, quoted_fare_paisa, status, idempotency_key)
-     VALUES ($1, $2, $3, $4, $5, 'REQUESTED', $6)
+       (passenger_id, pickup_zone_id, destination_zone_id, seats, wait_minutes, quoted_fare_paisa, status, idempotency_key)
+     VALUES ($1, $2, $3, $4, $5, $6, 'REQUESTED', $7)
      RETURNING id`,
-    [data.passengerId, data.pickupZoneId, data.destinationZoneId, data.seats, data.quotedFarePaisa, data.idempotencyKey],
+    [
+      data.passengerId, data.pickupZoneId, data.destinationZoneId, data.seats,
+      data.waitMinutes, data.quotedFarePaisa, data.idempotencyKey,
+    ],
   )
   // Read back through the same client — the insert is not committed yet.
   const ride = await findRideById(rows[0].id, undefined, tx)
@@ -129,6 +135,7 @@ export interface RideCoreRow {
   pickup_zone_id: number
   destination_zone_id: number
   seats: number
+  wait_minutes: number
   status: string
 }
 
@@ -141,7 +148,7 @@ export async function lockRideById(
   id: string,
 ): Promise<RideCoreRow | null> {
   const { rows } = await tx.query<RideCoreRow>(
-    `SELECT id, passenger_id, pool_id, pickup_zone_id, destination_zone_id, seats, status
+    `SELECT id, passenger_id, pool_id, pickup_zone_id, destination_zone_id, seats, wait_minutes, status
      FROM   ride_requests
      WHERE  id = $1
      FOR UPDATE`,
@@ -170,6 +177,7 @@ export interface OpenRequestRow {
   id: string
   passenger_name: string
   seats: number
+  wait_minutes: number
   pickup_zone_id: number
   pickup_zone_name: string
   destination_zone_id: number
@@ -183,6 +191,7 @@ export async function findOpenRequestsInZone(zoneId: number): Promise<OpenReques
     `SELECT r.id,
             u.name  AS passenger_name,
             r.seats,
+            r.wait_minutes,
             r.pickup_zone_id,
             pz.name AS pickup_zone_name,
             r.destination_zone_id,

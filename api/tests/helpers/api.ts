@@ -62,3 +62,39 @@ export function joinPool(driverToken: string, poolId: string, rideRequestId: str
     .set('Authorization', `Bearer ${driverToken}`)
     .send({ rideRequestId })
 }
+
+const poolAction = (token: string, poolId: string, action: string) =>
+  api().post(`/pools/${poolId}/${action}`).set('Authorization', `Bearer ${token}`)
+
+export const closePoolReq  = (t: string, p: string) => poolAction(t, p, 'close')
+export const arriveReq     = (t: string, p: string) => poolAction(t, p, 'arrive')
+export const startReq      = (t: string, p: string) => poolAction(t, p, 'start')
+export const completeReq   = (t: string, p: string) => poolAction(t, p, 'complete')
+
+export const dropoffReq = (token: string, poolId: string, rideId: string) =>
+  api()
+    .post(`/pools/${poolId}/rides/${rideId}/dropoff`)
+    .set('Authorization', `Bearer ${token}`)
+
+export const cancelRideReq = (token: string, rideId: string) =>
+  api().post(`/rides/${rideId}/cancel`).set('Authorization', `Bearer ${token}`)
+
+export const getRideReq = (token: string, rideId: string) =>
+  api().get(`/rides/${rideId}`).set('Authorization', `Bearer ${token}`)
+
+export const myRidesReq = (token: string) =>
+  api().get('/rides/mine').set('Authorization', `Bearer ${token}`)
+
+export const activePoolReq = (token: string) =>
+  api().get('/pools/active').set('Authorization', `Bearer ${token}`)
+
+export const requestFeedReq = (token: string) =>
+  api().get('/drivers/requests').set('Authorization', `Bearer ${token}`)
+
+/** Throws with the response body when the status is unexpected. */
+export function expectStatus(res: { status: number; body: unknown }, want: number) {
+  if (res.status !== want) {
+    throw new Error(`expected ${want}, got ${res.status}: ${JSON.stringify(res.body)}`)
+  }
+  return res
+}

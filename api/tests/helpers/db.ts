@@ -98,6 +98,15 @@ export async function poolStatus(poolId: string): Promise<string> {
   return rows[0].status
 }
 
+export async function poolEventReasons(poolId: string): Promise<string[]> {
+  const { rows } = await db.query<{ to_status: string; reason: string | null }>(
+    `SELECT to_status, reason FROM pool_status_events
+     WHERE pool_id = $1 ORDER BY created_at`,
+    [poolId],
+  )
+  return rows.map(r => `${r.to_status}:${r.reason ?? ''}`)
+}
+
 export async function closeDb(): Promise<void> {
   await db.end()
 }

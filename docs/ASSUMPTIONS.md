@@ -88,3 +88,31 @@ Each is implemented consistently throughout the codebase and seed data.
     The 90° threshold is a reasonable "same half of the city" rule; no map API is used.
     This is an explicit guard in addition to the detour-cap check — the two together
     catch wrong-direction routes both geometrically and by actual driving distance.
+
+13. **A passenger may self-join a pool the driver already opened to waiting — this
+    does not require the driver's per-passenger approval.**
+    `wait_for_pool: true` is the first passenger's advance consent to share the
+    vehicle with anyone compatible for the next 10 minutes. `GET /pools/nearby`
+    surfaces those pools before booking, and `POST /rides { poolId }` runs the
+    same atomic claim the driver's own accept action uses (§3.4), just with the
+    passenger as the actor instead of the driver. `canJoin` is still the sole
+    arbiter — a passenger can no more force their way into an incompatible pool
+    this way than the driver could. The driver's explicit accept (E4) remains
+    the only path when the passenger booked blind or picked wrong; nothing about
+    it changed.
+
+    **The listing is narrower than `canJoin` condition 1 allows.** `canJoin` treats
+    `FORMING` and `ACCEPTED` alike (assumption 1), but `GET /pools/nearby` only
+    ever lists `FORMING` pools. An `ACCEPTED` pool got there either because the
+    driver never opened a window (`waitForPool: false`) or explicitly closed one
+    (`POST /pools/:id/close`) — in both cases "still assembling" is the wrong
+    signal to show a browsing passenger, even though the rule would technically
+    still admit them within the 10-minute clock. Self-service discovery is
+    deliberately more conservative than the rule's outer bound.
+
+    **A failed or lost-race join never fails the booking.** The ride request and
+    the pool join are two different questions: if the join loses a race (seats
+    just taken) or the pool disappears between listing and booking, the response
+    reports `joinAttempt: { ok: false, reason, message }` and the ride is left
+    `REQUESTED`, exactly as if no pool had been chosen. A passenger's booking
+    should never be undone by someone else's timing.

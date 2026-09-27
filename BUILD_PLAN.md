@@ -803,6 +803,42 @@ trip starts.
 
 Commit: `feat(pool): apply pool discount when a second passenger joins`
 
+**E6 — Passenger-side pool discovery and self-join**
+
+Before E1–E5, a pool only ever grew through the driver: a passenger booked
+blind, and the driver's request feed was the only place anyone saw whether a
+compatible pool already existed. This step gives the passenger the same
+visibility, before they book.
+
+`GET /pools/nearby?pickupZoneId=&destinationZoneId=&seats=` (passenger only).
+Lists every `FORMING` pool whose `origin_zone_id` matches the pickup zone, each
+run through `canJoin` exactly as the driver's feed does, and returned even when
+not joinable — with the same rejection reason `joinRejectionMessage` gives the
+driver — so "no pool fits" and "no pool exists yet" are never confused. `ACCEPTED`
+pools are excluded: that status means the driver either never opened a window
+or explicitly closed one, and either way is not "still assembling". The DTO
+(`PoolOptionDTO`) carries the driver's name, vehicle, seats available, and the
+window's remaining seconds — never a fare, never a co-passenger's name.
+
+`POST /rides` gains an optional `poolId`. The booking itself is unchanged and
+always succeeds on its own terms (idempotency, `ALREADY_ACTIVE`, solo fare
+quoted); a `poolId` only triggers a best-effort follow-up: the atomic core from
+E4 (`runAtomicJoin`, extracted out of `joinPool` so both paths share one code
+path) runs with the passenger as the actor rather than the driver. If the pool
+filled up, closed its window, or vanished between the listing and the booking,
+the join attempt reports `{ ok: false, reason, message }` and the ride simply
+stays `REQUESTED` — the booking is never rolled back or failed because a race
+was lost. The response is `{ ride, joinAttempt? }`.
+
+This is a deliberate policy choice, not just plumbing: `wait_for_pool: true` is
+the first passenger's advance consent to share with a compatible stranger for
+the next 10 minutes, so a second passenger whose route fits does not need the
+driver to re-approve them one by one. The driver's own accept action (E4) is
+untouched and still the only path when the passenger didn't pick a pool, or
+picked wrong and a human needs to sort it out.
+
+Commit: `feat(pool): let passengers discover and self-join a compatible pool`
+
 ---
 
 ## 9. Block F — Ride lifecycle (steps F1–F4)
@@ -966,6 +1002,20 @@ Commit: `feat(web): add login screen with seeded demo accounts`
 **I3 — Passenger page**
 Booking form: pickup zone, destination zone, seats; a live quote (debounced
 `/rides/quote`) showing solo and pooled fare before booking.
+
+**"Riders already heading this way" (E6).** Once destination and seats are
+chosen, `GET /pools/nearby` is polled every 4 seconds alongside the quote. Every
+returned pool is shown, joinable or not: a joinable one is a selectable row with
+the driver's name, seats left, and a live countdown to the window closing; an
+unjoinable one is shown disabled with the plain-language reason instead of being
+hidden. "Book my own pool" is the default, always-selectable choice. Picking a
+pool changes the submit label to "Join pool & request" and sends its id as
+`poolId` on `POST /rides`; the response's `joinAttempt` (present only when a
+`poolId` was sent) drives a one-line banner after booking — success, or the
+reason it didn't work, with the booking itself always having gone through
+regardless. If a poll shows the selected pool has filled or closed, the choice
+silently reverts to "book my own" rather than submitting a stale one.
+
 Once a ride is active, the same page shows a status timeline
 (`REQUESTED → MATCHED → PICKED_UP → DROPPED_OFF`), the current fare, the driver and
 vehicle, `Shared with N other passenger(s)`, and a Cancel button that is disabled

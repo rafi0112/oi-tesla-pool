@@ -114,6 +114,12 @@ export const activePoolReq = (token: string) =>
 export const requestFeedReq = (token: string) =>
   api().get('/drivers/requests').set('Authorization', `Bearer ${token}`)
 
+export const passengerProfileReq = (token: string) =>
+  api().get('/passengers/me').set('Authorization', `Bearer ${token}`)
+
+export const setPassengerLocationReq = (token: string, zoneId: number) =>
+  api().patch('/passengers/me').set('Authorization', `Bearer ${token}`).send({ zoneId })
+
 /** Throws with the response body when the status is unexpected. */
 export function expectStatus(res: { status: number; body: unknown }, want: number) {
   if (res.status !== want) {

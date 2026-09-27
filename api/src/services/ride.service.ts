@@ -88,6 +88,10 @@ export async function cancelRide(
   if (!owned) throw new NotFoundError('Ride not found')
 
   await withTransaction(async tx => {
+    // Pool before ride. Every path that locks both uses this order, so they
+    // cannot deadlock against each other.
+    if (owned.pool_id !== null) await lockPoolById(tx, owned.pool_id)
+
     const locked = await lockRideById(tx, rideId)
     if (!locked) throw new NotFoundError('Ride not found')
 
@@ -95,6 +99,8 @@ export async function cancelRide(
 
     if (locked.pool_id === null) return
 
+    // Re-locks the same row harmlessly, and covers the case where the driver
+    // pooled this ride between the unlocked read above and the ride lock.
     const pool = await lockPoolById(tx, locked.pool_id)
     if (!pool) return
 

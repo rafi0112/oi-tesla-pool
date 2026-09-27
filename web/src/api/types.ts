@@ -1,0 +1,95 @@
+export type Role = 'PASSENGER' | 'DRIVER'
+
+export type RideStatus =
+  | 'REQUESTED' | 'MATCHED' | 'PICKED_UP' | 'DROPPED_OFF' | 'CANCELLED'
+
+export type PoolStatus =
+  | 'FORMING' | 'ACCEPTED' | 'DRIVER_ARRIVED' | 'EN_ROUTE' | 'COMPLETED' | 'CANCELLED'
+
+export interface User {
+  id: string
+  name: string
+  email: string
+  role: Role
+}
+
+export interface Zone {
+  id: number
+  name: string
+  lat: number
+  lng: number
+}
+
+export interface ZoneRef {
+  id: number
+  name: string
+}
+
+export interface Quote {
+  distanceKm: number
+  soloFarePaisa: number
+  pooledFarePaisa: number
+}
+
+export interface PassengerRide {
+  id: string
+  status: RideStatus
+  farePaisa: number
+  quotedFarePaisa: number
+  finalFarePaisa: number | null
+  pickupZone: ZoneRef
+  destinationZone: ZoneRef
+  seats: number
+  poolId: string | null
+  driver: { name: string; vehicle: string } | null
+  sharedWith: number
+  canCancel: boolean
+  createdAt: string
+}
+
+export interface RideEvent {
+  fromStatus: RideStatus | null
+  toStatus: RideStatus
+  actor: 'passenger' | 'driver' | 'system'
+  reason: string | null
+  at: string
+}
+
+export interface DriverProfile {
+  id: string
+  name: string
+  isOnline: boolean
+  currentZone: ZoneRef | null
+  vehicle: { name: string; seatCapacity: number } | null
+}
+
+export interface DriverPassenger {
+  rideId: string
+  name: string
+  seats: number
+  status: RideStatus
+  pickupZone: ZoneRef
+  destinationZone: ZoneRef
+}
+
+export interface DriverPool {
+  id: string
+  status: PoolStatus
+  seatsAvailable: number
+  seatCapacity: number
+  originZone: ZoneRef
+  waitForPool: boolean
+  createdAt: string
+  passengers: DriverPassenger[]
+}
+
+export interface DriverRequest {
+  rideId: string
+  passengerName: string
+  seats: number
+  pickupZone: ZoneRef
+  destinationZone: ZoneRef
+  requestedAt: string
+  joinable: boolean
+  reason?: string
+}

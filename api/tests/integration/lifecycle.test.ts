@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import {
   truncateAll, seedWorld, seatsAvailable, poolStatus,
-  poolEventReasons, closeDb, TestWorld,
+  poolEventReasons, expirePoolWait, poolWaitUntil, closeDb, TestWorld,
 } from '../helpers/db'
 import {
   tokenFor, goOnline, bookRide, openPool, joinPool,
@@ -197,6 +197,82 @@ describe('passenger-chosen wait time', () => {
     const refused = await joinPool(jashim, pool.id, rafiqRide.id)
     expect(refused.status).toBe(409)
     expect(refused.body.error.details.reason).toBe('not_waiting_for_pool')
+  })
+
+  it('auto-closes on its own once the deadline passes, with no one clicking anything', async () => {
+    const jashim = await tokenFor('Jashim Uddin')
+    await goOnline(jashim, banani)
+    const nusrat = await tokenFor('Nusrat Jahan')
+
+    const ride = await bookRide(nusrat, {
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes: 5,
+    })
+    const pool = await openPool(jashim, ride.id)
+    expect(pool.status).toBe('FORMING')
+
+    await expirePoolWait(pool.id)
+
+    // Nobody has touched the pool since it expired — the very next read is
+    // what flips it, not a background job.
+    const res = expectStatus(await activePoolReq(jashim), 200)
+    expect(res.body.pool.status).toBe('ACCEPTED')
+    expect(res.body.pool.waitUntil).toBeNull()
+    expect(await poolEventReasons(pool.id)).toEqual([
+      'FORMING:pool_created',
+      'ACCEPTED:wait_time_elapsed',
+    ])
+  })
+
+  it('lets the driver arrive on an expired pool instead of failing with a stale FORMING status', async () => {
+    const jashim = await tokenFor('Jashim Uddin')
+    await goOnline(jashim, banani)
+    const nusrat = await tokenFor('Nusrat Jahan')
+
+    const ride = await bookRide(nusrat, {
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes: 5,
+    })
+    const pool = await openPool(jashim, ride.id)
+    await expirePoolWait(pool.id)
+
+    // No one ever called GET /pools/active or POST /pools/:id/close first —
+    // "arrive" itself must be the thing that notices the window closed.
+    const res = expectStatus(await arriveReq(jashim, pool.id), 200)
+    expect(res.body.pool.status).toBe('DRIVER_ARRIVED')
+  })
+
+  it('refuses a join against an expired pool and reports the pool as closed afterward', async () => {
+    const jashim = await tokenFor('Jashim Uddin')
+    await goOnline(jashim, banani)
+    const nusrat = await tokenFor('Nusrat Jahan')
+    const rafiq  = await tokenFor('Rafiq Hasan')
+
+    const nusratRide = await bookRide(nusrat, {
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes: 5,
+    })
+    const pool = await openPool(jashim, nusratRide.id)
+    await expirePoolWait(pool.id)
+
+    const rafiqRide = await bookRide(rafiq, {
+      pickupZoneId: banani, destinationZoneId: gulshan, seats: 1,
+    })
+    const refused = await joinPool(jashim, pool.id, rafiqRide.id)
+    expect(refused.status).toBe(409)
+    expect(refused.body.error.details.reason).toBe('not_waiting_for_pool')
+    expect(await poolStatus(pool.id)).toBe('ACCEPTED')
+  })
+
+  it('never reopens a deadline once cleared, even if wait_until is somehow in the future again', async () => {
+    const jashim = await tokenFor('Jashim Uddin')
+    await goOnline(jashim, banani)
+    const nusrat = await tokenFor('Nusrat Jahan')
+
+    const ride = await bookRide(nusrat, {
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes: 5,
+    })
+    const pool = await openPool(jashim, ride.id)
+    await expirePoolWait(pool.id)
+    await activePoolReq(jashim) // triggers the auto-close
+    expect(await poolWaitUntil(pool.id)).toBeNull()
   })
 })
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
-import { truncateAll, seedWorld, seatsAvailable, closeDb, TestWorld } from '../helpers/db'
+import { truncateAll, seedWorld, seatsAvailable, expirePoolWait, closeDb, TestWorld } from '../helpers/db'
 import {
   tokenFor, goOnline, bookRide, bookRideIntoPool, openPool,
   nearbyPoolsReq, getRideReq, expectStatus,
@@ -92,6 +92,24 @@ describe('GET /pools/nearby', () => {
     const res = await nearbyPoolsReq(rafiq, { pickupZoneId: NaN as unknown as number, destinationZoneId: gulshan, seats: 1 })
     expect(res.status).toBe(422)
     expect(res.body.error.code).toBe('VALIDATION_ERROR')
+  })
+
+  it('drops a pool from the listing once its wait time has auto-closed it', async () => {
+    const jashim = await tokenFor('Jashim Uddin')
+    await goOnline(jashim, banani)
+    const nusrat = await tokenFor('Nusrat Jahan')
+    const nusratRide = await bookRide(nusrat, {
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes: 5,
+    })
+    const pool = await openPool(jashim, nusratRide.id)
+    await expirePoolWait(pool.id)
+
+    const rafiq = await tokenFor('Rafiq Hasan')
+    const res = expectStatus(
+      await nearbyPoolsReq(rafiq, { pickupZoneId: banani, destinationZoneId: gulshan, seats: 1 }),
+      200,
+    )
+    expect(res.body.pools).toEqual([])
   })
 })
 

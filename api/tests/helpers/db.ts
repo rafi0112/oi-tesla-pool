@@ -103,6 +103,22 @@ export async function poolStatus(poolId: string): Promise<string> {
   return rows[0].status
 }
 
+/** Backdates a pool's deadline into the past, so tests don't wait for real minutes to pass. */
+export async function expirePoolWait(poolId: string): Promise<void> {
+  await db.query(
+    `UPDATE pools SET wait_until = now() - interval '1 second' WHERE id = $1`,
+    [poolId],
+  )
+}
+
+export async function poolWaitUntil(poolId: string): Promise<string | null> {
+  const { rows } = await db.query<{ wait_until: string | null }>(
+    `SELECT wait_until FROM pools WHERE id = $1`,
+    [poolId],
+  )
+  return rows[0].wait_until
+}
+
 export async function poolEventReasons(poolId: string): Promise<string[]> {
   const { rows } = await db.query<{ to_status: string; reason: string | null }>(
     `SELECT to_status, reason FROM pool_status_events

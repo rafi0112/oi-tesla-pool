@@ -28,15 +28,15 @@ describe("Bullet's three seats", () => {
     const jashim = await tokenFor('Jashim Uddin')
     await goOnline(jashim, banani)
 
-    const ride = async (name: string) => {
+    const ride = async (name: string, waitMinutes = 0) => {
       const token = await tokenFor(name)
       return bookRide(token, {
-        pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1,
+        pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes,
       })
     }
 
-    const first = await ride('Nusrat Jahan')
-    const pool = await openPool(jashim, first.id, true)
+    const first = await ride('Nusrat Jahan', 5)
+    const pool = await openPool(jashim, first.id)
     expect(pool.seatsAvailable).toBe(2)
 
     expectStatus(await joinPool(jashim, pool.id, (await ride('Rafiq Hasan')).id), 201)
@@ -55,9 +55,9 @@ describe("Bullet's three seats", () => {
 
     const nusrat = await tokenFor('Nusrat Jahan')
     const first = await bookRide(nusrat, {
-      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 2,
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 2, waitMinutes: 5,
     })
-    const pool = await openPool(jashim, first.id, true)
+    const pool = await openPool(jashim, first.id)
     expect(pool.seatsAvailable).toBe(1)
 
     const rafiq = await tokenFor('Rafiq Hasan')
@@ -82,7 +82,7 @@ describe("Bullet's three seats", () => {
     // Three seats, one booking, still the single solo fare.
     expect(ride.farePaisa).toBe(5000)
 
-    await openPool(jashim, ride.id, false)
+    await openPool(jashim, ride.id)
     const res = expectStatus(await getRideReq(nusrat, ride.id), 200)
     expect(res.body.ride.seats).toBe(3)
     expect(res.body.ride.farePaisa).toBe(5000)
@@ -124,9 +124,9 @@ describe('ownership', () => {
     await goOnline(jashim, banani)
     const nusrat = await tokenFor('Nusrat Jahan')
     const ride = await bookRide(nusrat, {
-      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1,
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes: 5,
     })
-    const pool = await openPool(jashim, ride.id, true)
+    const pool = await openPool(jashim, ride.id)
 
     // A second driver, who owns nothing.
     await api().post('/auth/register').send({
@@ -149,9 +149,9 @@ describe('cancellation', () => {
     const rafiq  = await tokenFor('Rafiq Hasan')
 
     const nusratRide = await bookRide(nusrat, {
-      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1,
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes: 5,
     })
-    const pool = await openPool(jashim, nusratRide.id, true)
+    const pool = await openPool(jashim, nusratRide.id)
 
     const rafiqRide = await bookRide(rafiq, {
       pickupZoneId: banani, destinationZoneId: gulshan, seats: 1,
@@ -170,9 +170,9 @@ describe('cancellation', () => {
     const rafiq  = await tokenFor('Rafiq Hasan')
 
     const nusratRide = await bookRide(nusrat, {
-      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1,
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes: 5,
     })
-    const pool = await openPool(jashim, nusratRide.id, true)
+    const pool = await openPool(jashim, nusratRide.id)
 
     const rafiqRide = await bookRide(rafiq, {
       pickupZoneId: banani, destinationZoneId: mohakhali, seats: 2,
@@ -192,7 +192,7 @@ describe('cancellation', () => {
     const ride = await bookRide(nusrat, {
       pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1,
     })
-    const pool = await openPool(jashim, ride.id, false)
+    const pool = await openPool(jashim, ride.id)
     expectStatus(await arriveReq(jashim, pool.id), 200)
     expectStatus(await startReq(jashim, pool.id), 200)
 
@@ -208,7 +208,7 @@ describe('roles and auth', () => {
 
     const attempts = [
       api().post('/pools').set('Authorization', `Bearer ${nusrat}`).send({
-        rideRequestId: '00000000-0000-0000-0000-000000000000', waitForPool: false,
+        rideRequestId: '00000000-0000-0000-0000-000000000000',
       }),
       requestFeedReq(nusrat),
       activePoolReq(nusrat),
@@ -323,9 +323,9 @@ describe('the driver request feed', () => {
     // Nusrat heads north to Uttara.
     const nusrat = await tokenFor('Nusrat Jahan')
     const nusratRide = await bookRide(nusrat, {
-      pickupZoneId: banani, destinationZoneId: world.zoneId('Uttara'), seats: 1,
+      pickupZoneId: banani, destinationZoneId: world.zoneId('Uttara'), seats: 1, waitMinutes: 5,
     })
-    await openPool(jashim, nusratRide.id, true)
+    await openPool(jashim, nusratRide.id)
 
     // Rafiq wants to go south to Dhanmondi.
     const rafiq = await tokenFor('Rafiq Hasan')

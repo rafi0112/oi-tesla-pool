@@ -29,7 +29,7 @@ export async function goOnline(driverToken: string, zoneId: number) {
 
 export async function bookRide(
   passengerToken: string,
-  body: { pickupZoneId: number; destinationZoneId: number; seats: number },
+  body: { pickupZoneId: number; destinationZoneId: number; seats: number; waitMinutes?: number },
 ) {
   const res = await api()
     .post('/rides')
@@ -44,7 +44,7 @@ export async function bookRide(
 /** Like bookRide, but for calls that pass poolId and need to see joinAttempt too. */
 export async function bookRideIntoPool(
   passengerToken: string,
-  body: { pickupZoneId: number; destinationZoneId: number; seats: number; poolId: string },
+  body: { pickupZoneId: number; destinationZoneId: number; seats: number; poolId: string; waitMinutes?: number },
 ) {
   const res = await api()
     .post('/rides')
@@ -68,19 +68,15 @@ export const nearbyPoolsReq = (
     .query(q)
     .set('Authorization', `Bearer ${token}`)
 
-export async function openPool(
-  driverToken: string,
-  rideRequestId: string,
-  waitForPool: boolean,
-) {
+export async function openPool(driverToken: string, rideRequestId: string) {
   const res = await api()
     .post('/pools')
     .set('Authorization', `Bearer ${driverToken}`)
-    .send({ rideRequestId, waitForPool })
+    .send({ rideRequestId })
   if (res.status !== 201) {
     throw new Error(`pool creation failed: ${res.status} ${JSON.stringify(res.body)}`)
   }
-  return res.body.pool as { id: string; seatsAvailable: number; status: string }
+  return res.body.pool as { id: string; seatsAvailable: number; status: string; waitUntil: string | null }
 }
 
 export function joinPool(driverToken: string, poolId: string, rideRequestId: string) {

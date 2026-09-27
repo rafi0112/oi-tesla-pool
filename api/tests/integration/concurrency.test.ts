@@ -35,9 +35,10 @@ describe('concurrent claims on the last seat', () => {
       pickupZoneId: banani,
       destinationZoneId: mohakhali,
       seats: 2,
+      waitMinutes: 5,
     })
 
-    const pool = await openPool(driverToken, nusratRide.id, true)
+    const pool = await openPool(driverToken, nusratRide.id)
     expect(pool.seatsAvailable).toBe(1)
     expect(pool.status).toBe('FORMING')
 
@@ -84,8 +85,9 @@ describe('concurrent claims on the last seat', () => {
       pickupZoneId: banani,
       destinationZoneId: mohakhali,
       seats: 2,
+      waitMinutes: 5,
     })
-    const pool = await openPool(driverToken, nusratRide.id, true)
+    const pool = await openPool(driverToken, nusratRide.id)
 
     const contenders: { name: string; rideId: string; token: string }[] = []
     for (const name of CONTENDERS) {

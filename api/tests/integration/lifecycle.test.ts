@@ -32,14 +32,14 @@ describe('the full pooled trip', () => {
     const nusrat = await tokenFor('Nusrat Jahan')
     const rafiq  = await tokenFor('Rafiq Hasan')
 
-    // Nusrat books alone and is quoted the solo fare.
+    // Nusrat books alone, willing to wait 5 minutes, and is quoted the solo fare.
     const nusratRide = await bookRide(nusrat, {
-      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1,
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes: 5,
     })
     expect(nusratRide.farePaisa).toBe(5000)
 
-    // Jashim accepts and agrees to wait for one more.
-    const pool = await openPool(jashim, nusratRide.id, true)
+    // Jashim accepts; her own wait preference is what opens the window.
+    const pool = await openPool(jashim, nusratRide.id)
     expect(pool.status).toBe('FORMING')
     expect(pool.seatsAvailable).toBe(2)
 
@@ -98,7 +98,7 @@ describe('the full pooled trip', () => {
     const ride = await bookRide(nusrat, {
       pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1,
     })
-    const pool = await openPool(jashim, ride.id, false)
+    const pool = await openPool(jashim, ride.id)
     await arriveReq(jashim, pool.id)
     await startReq(jashim, pool.id)
     await dropoffReq(jashim, pool.id, ride.id)
@@ -115,18 +115,20 @@ describe('the full pooled trip', () => {
   })
 })
 
-describe('waitForPool', () => {
-  it('opens the pool closed when the passenger will not wait', async () => {
+describe('passenger-chosen wait time', () => {
+  it('opens the pool closed when the passenger chose not to wait', async () => {
     const jashim = await tokenFor('Jashim Uddin')
     await goOnline(jashim, banani)
     const nusrat = await tokenFor('Nusrat Jahan')
     const rafiq  = await tokenFor('Rafiq Hasan')
 
+    // waitMinutes defaults to 0 — Nusrat did not ask anyone to wait for her.
     const nusratRide = await bookRide(nusrat, {
       pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1,
     })
-    const pool = await openPool(jashim, nusratRide.id, false)
+    const pool = await openPool(jashim, nusratRide.id)
     expect(pool.status).toBe('ACCEPTED')
+    expect(pool.waitUntil).toBeNull()
 
     const rafiqRide = await bookRide(rafiq, {
       pickupZoneId: banani, destinationZoneId: gulshan, seats: 1,
@@ -145,11 +147,56 @@ describe('waitForPool', () => {
     const ride = await bookRide(nusrat, {
       pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1,
     })
-    const pool = await openPool(jashim, ride.id, false)
+    const pool = await openPool(jashim, ride.id)
 
     const res = await closePoolReq(jashim, pool.id)
     expect(res.status).toBe(409)
     expect(res.body.error.code).toBe('INVALID_TRANSITION')
+  })
+
+  it('ratchets the deadline earlier when a shorter-patience passenger joins', async () => {
+    const jashim = await tokenFor('Jashim Uddin')
+    await goOnline(jashim, banani)
+    const nusrat = await tokenFor('Nusrat Jahan')
+    const rafiq  = await tokenFor('Rafiq Hasan')
+
+    const nusratRide = await bookRide(nusrat, {
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes: 5,
+    })
+    const pool = await openPool(jashim, nusratRide.id)
+    const openedUntil = new Date(pool.waitUntil!).getTime()
+
+    const rafiqRide = await bookRide(rafiq, {
+      pickupZoneId: banani, destinationZoneId: gulshan, seats: 1, waitMinutes: 3,
+    })
+    expectStatus(await joinPool(jashim, pool.id, rafiqRide.id), 201)
+
+    const after = expectStatus(await activePoolReq(jashim), 200)
+    const closesUntil = new Date(after.body.pool.waitUntil).getTime()
+
+    // Rafiq's shorter 3-minute patience pulled the deadline earlier than
+    // Nusrat's original 5-minute one — never later.
+    expect(closesUntil).toBeLessThan(openedUntil)
+  })
+
+  it('closing the pool blocks joins immediately, even with time left on the clock', async () => {
+    const jashim = await tokenFor('Jashim Uddin')
+    await goOnline(jashim, banani)
+    const nusrat = await tokenFor('Nusrat Jahan')
+    const rafiq  = await tokenFor('Rafiq Hasan')
+
+    const nusratRide = await bookRide(nusrat, {
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes: 10,
+    })
+    const pool = await openPool(jashim, nusratRide.id)
+    expectStatus(await closePoolReq(jashim, pool.id), 200)
+
+    const rafiqRide = await bookRide(rafiq, {
+      pickupZoneId: banani, destinationZoneId: gulshan, seats: 1,
+    })
+    const refused = await joinPool(jashim, pool.id, rafiqRide.id)
+    expect(refused.status).toBe(409)
+    expect(refused.body.error.details.reason).toBe('not_waiting_for_pool')
   })
 })
 
@@ -167,9 +214,9 @@ describe('active pool', () => {
     const nusrat = await tokenFor('Nusrat Jahan')
 
     const ride = await bookRide(nusrat, {
-      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1,
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes: 5,
     })
-    await openPool(jashim, ride.id, true)
+    await openPool(jashim, ride.id)
 
     const res = expectStatus(await activePoolReq(jashim), 200)
     expect(res.body.pool.passengers).toHaveLength(1)
@@ -185,9 +232,9 @@ describe('pool auto-cancellation', () => {
     const nusrat = await tokenFor('Nusrat Jahan')
 
     const ride = await bookRide(nusrat, {
-      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1,
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes: 5,
     })
-    const pool = await openPool(jashim, ride.id, true)
+    const pool = await openPool(jashim, ride.id)
 
     const { cancelRideReq } = await import('../helpers/api')
     expectStatus(await cancelRideReq(nusrat, ride.id), 200)
@@ -206,9 +253,9 @@ describe('pool auto-cancellation', () => {
     const rafiq  = await tokenFor('Rafiq Hasan')
 
     const nusratRide = await bookRide(nusrat, {
-      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1,
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes: 5,
     })
-    const pool = await openPool(jashim, nusratRide.id, true)
+    const pool = await openPool(jashim, nusratRide.id)
 
     const rafiqRide = await bookRide(rafiq, {
       pickupZoneId: banani, destinationZoneId: gulshan, seats: 1,

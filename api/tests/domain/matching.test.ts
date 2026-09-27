@@ -12,8 +12,8 @@ const DHANMONDI = zoneId('Dhanmondi')
 const UTTARA    = zoneId('Uttara')
 const MIRPUR    = zoneId('Mirpur')
 
-const NOW     = new Date('2026-09-27T10:00:00Z')
-const CREATED = new Date('2026-09-27T09:58:00Z') // 2 minutes into the window
+const NOW        = new Date('2026-09-27T10:00:00Z')
+const WAIT_UNTIL = new Date('2026-09-27T10:03:00Z') // 3 minutes still on the clock
 
 /** A FORMING pool from Banani carrying Nusrat, who is headed to Mohakhali. */
 function poolWithNusrat(over: Partial<PoolSnapshot> = {}): PoolSnapshot {
@@ -21,8 +21,7 @@ function poolWithNusrat(over: Partial<PoolSnapshot> = {}): PoolSnapshot {
     status:         'FORMING',
     seatsAvailable: 2,
     originZoneId:   BANANI,
-    waitForPool:    true,
-    createdAt:      CREATED,
+    waitUntil:      WAIT_UNTIL,
     members: [{ rideId: 'nusrat-ride', destinationZoneId: MOHAKHALI, seats: 1 }],
     ...over,
   }
@@ -118,20 +117,20 @@ describe('canJoin — rejections', () => {
       .toEqual({ ok: false, reason: 'opposite_direction' })
   })
 
-  it('rejects when the first passenger chose not to wait', () => {
-    expect(canJoin(poolWithNusrat({ waitForPool: false }), rafiq, zones, distances, NOW))
+  it('rejects when nobody aboard is waiting for more', () => {
+    expect(canJoin(poolWithNusrat({ waitUntil: null }), rafiq, zones, distances, NOW))
       .toEqual({ ok: false, reason: 'not_waiting_for_pool' })
   })
 
-  it('rejects once the pooling window has closed', () => {
-    const stale = new Date(NOW.getTime() - (POOL_POLICY.poolWindowMinutes + 1) * 60_000)
-    expect(canJoin(poolWithNusrat({ createdAt: stale }), rafiq, zones, distances, NOW))
+  it('rejects once every member’s deadline has passed', () => {
+    const justExpired = new Date(NOW.getTime() - 1)
+    expect(canJoin(poolWithNusrat({ waitUntil: justExpired }), rafiq, zones, distances, NOW))
       .toEqual({ ok: false, reason: 'pool_window_expired' })
   })
 
-  it('still accepts a request on the last minute of the window', () => {
-    const edge = new Date(NOW.getTime() - POOL_POLICY.poolWindowMinutes * 60_000)
-    expect(canJoin(poolWithNusrat({ createdAt: edge }), rafiq, zones, distances, NOW))
+  it('still accepts a request in the deadline’s final second', () => {
+    const justInTime = new Date(NOW.getTime())
+    expect(canJoin(poolWithNusrat({ waitUntil: justInTime }), rafiq, zones, distances, NOW))
       .toEqual({ ok: true })
   })
 

@@ -37,9 +37,9 @@ describe('GET /pools/nearby', () => {
     await goOnline(jashim, banani)
     const nusrat = await tokenFor('Nusrat Jahan')
     const nusratRide = await bookRide(nusrat, {
-      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1,
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes: 5,
     })
-    const pool = await openPool(jashim, nusratRide.id, true)
+    const pool = await openPool(jashim, nusratRide.id)
 
     const rafiq = await tokenFor('Rafiq Hasan')
     const res = expectStatus(
@@ -64,9 +64,9 @@ describe('GET /pools/nearby', () => {
     await goOnline(jashim, banani)
     const nusrat = await tokenFor('Nusrat Jahan')
     const nusratRide = await bookRide(nusrat, {
-      pickupZoneId: banani, destinationZoneId: uttara, seats: 1,
+      pickupZoneId: banani, destinationZoneId: uttara, seats: 1, waitMinutes: 5,
     })
-    const pool = await openPool(jashim, nusratRide.id, true)
+    const pool = await openPool(jashim, nusratRide.id)
 
     // Shirin wants to go the opposite way from Nusrat.
     const shirin = await tokenFor('Shirin Akter')
@@ -101,9 +101,9 @@ describe('POST /rides with poolId — self-service join', () => {
     await goOnline(jashim, banani)
     const nusrat = await tokenFor('Nusrat Jahan')
     const nusratRide = await bookRide(nusrat, {
-      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1,
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes: 5,
     })
-    const pool = await openPool(jashim, nusratRide.id, true)
+    const pool = await openPool(jashim, nusratRide.id)
 
     const rafiq = await tokenFor('Rafiq Hasan')
     const result = await bookRideIntoPool(rafiq, {
@@ -125,9 +125,9 @@ describe('POST /rides with poolId — self-service join', () => {
     await goOnline(jashim, banani)
     const nusrat = await tokenFor('Nusrat Jahan')
     const nusratRide = await bookRide(nusrat, {
-      pickupZoneId: banani, destinationZoneId: uttara, seats: 1,
+      pickupZoneId: banani, destinationZoneId: uttara, seats: 1, waitMinutes: 5,
     })
-    const pool = await openPool(jashim, nusratRide.id, true)
+    const pool = await openPool(jashim, nusratRide.id)
 
     const shirin = await tokenFor('Shirin Akter')
     const result = await bookRideIntoPool(shirin, {

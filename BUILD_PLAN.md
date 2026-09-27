@@ -890,6 +890,14 @@ Add `vitest` and `supertest`. Integration tests go through the real HTTP layer
 against a test database; truncate all tables before each test. Domain tests need
 no database.
 
+**The test database is a separate database, never the development one.**
+`npm test` sets `NODE_ENV=test`, which redirects the connection to
+`TEST_DATABASE_URL`, defaulting to `DATABASE_URL` with a `_test` suffix. A global
+setup creates that database if missing and applies the migrations. Two guards
+refuse to proceed unless the target name ends in `_test`: one in the setup, one
+in the truncate helper itself. Running the suite must never disturb the seeded
+demo data a reviewer is looking at.
+
 **H1 — Domain unit tests**
 - Nusrat's pooled fare is exactly `4000`; Rafiq's is exactly `4800` (`toBe`, not `toBeCloseTo`)
 - solo fares are `5000` and `6000`
@@ -922,8 +930,24 @@ Commit: `test(api): cover capacity, ownership and cancellation rules`
 ## 12. Block I — Frontend (steps I1–I4)
 
 Branch: `feature/frontend`
-React + Vite + React Router + Tailwind. Three pages only. Plain and clean;
-no animation work. Every page needs explicit loading, error and empty states.
+React + Vite + React Router + Tailwind. Three pages only. Every page needs
+explicit loading, error and empty states.
+
+**Design.** Two themes over one set of semantic tokens: warm paper for the
+passenger's ticket, dark glass for the driver's in-vehicle console. Components
+read the tokens only, so wrapping a subtree in `.theme-console` flips it whole.
+
+The centrepiece is `RouteRadar`, which draws the §3.2 matching rule as one
+picture: the pickup at the centre, every zone at its true compass bearing, each
+member's destination as a solid line, waiting requests dashed, and a shaded arc
+showing the headings a new rider may still take. A rejected destination is drawn
+outside the arc and struck through, so `opposite_direction` is something the
+driver sees rather than reads. Bearings come from the same `Math.atan2` formula
+the API uses; the client never decides joinability, it only renders the verdict.
+
+Motion is reserved for meaning — the pooled-fare stamp, the radar sweep while a
+pool is forming, a line drawing itself as a rider joins — and every animation is
+disabled under `prefers-reduced-motion`.
 
 **I1 — Shell**
 Vite + Tailwind setup in `web/`. `api/client.ts` with a typed `request()` that

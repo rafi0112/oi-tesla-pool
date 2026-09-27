@@ -38,8 +38,35 @@ export async function bookRide(
   if (res.status !== 201) {
     throw new Error(`booking failed: ${res.status} ${JSON.stringify(res.body)}`)
   }
-  return res.body.ride as { id: string; farePaisa: number; status: string }
+  return res.body.ride as { id: string; farePaisa: number; status: string; poolId: string | null }
 }
+
+/** Like bookRide, but for calls that pass poolId and need to see joinAttempt too. */
+export async function bookRideIntoPool(
+  passengerToken: string,
+  body: { pickupZoneId: number; destinationZoneId: number; seats: number; poolId: string },
+) {
+  const res = await api()
+    .post('/rides')
+    .set('Authorization', `Bearer ${passengerToken}`)
+    .send(body)
+  if (res.status !== 201) {
+    throw new Error(`booking failed: ${res.status} ${JSON.stringify(res.body)}`)
+  }
+  return res.body as {
+    ride: { id: string; farePaisa: number; status: string; poolId: string | null }
+    joinAttempt?: { ok: boolean; reason?: string; message?: string }
+  }
+}
+
+export const nearbyPoolsReq = (
+  token: string,
+  q: { pickupZoneId: number; destinationZoneId: number; seats: number },
+) =>
+  api()
+    .get('/pools/nearby')
+    .query(q)
+    .set('Authorization', `Bearer ${token}`)
 
 export async function openPool(
   driverToken: string,

@@ -98,7 +98,10 @@ export const api = {
   nearbyPools: (query: { pickupZoneId: number; destinationZoneId: number; seats: number }) =>
     request<{ pools: PoolOption[] }>('/pools/nearby', { query }),
   bookRide: (
-    body: { pickupZoneId: number; destinationZoneId: number; seats: number; poolId?: string },
+    body: {
+      pickupZoneId: number; destinationZoneId: number; seats: number
+      waitMinutes?: number; poolId?: string
+    },
     idempotencyKey: string,
   ) =>
     request<{ ride: PassengerRide; joinAttempt?: JoinAttempt }>('/rides', {
@@ -113,8 +116,8 @@ export const api = {
     request<{ driver: DriverProfile }>('/drivers/me', { method: 'PATCH', body }),
   requestFeed: () => request<{ requests: DriverRequest[] }>('/drivers/requests'),
   activePool: () => request<{ pool: DriverPool | null }>('/pools/active'),
-  createPool: (rideRequestId: string, waitForPool: boolean) =>
-    request<{ pool: DriverPool }>('/pools', { method: 'POST', body: { rideRequestId, waitForPool } }),
+  createPool: (rideRequestId: string) =>
+    request<{ pool: DriverPool }>('/pools', { method: 'POST', body: { rideRequestId } }),
   joinPool: (poolId: string, rideRequestId: string) =>
     request<{ pool: DriverPool }>(`/pools/${poolId}/rides`, { method: 'POST', body: { rideRequestId } }),
   poolAction: (poolId: string, action: 'close' | 'arrive' | 'start' | 'complete') =>

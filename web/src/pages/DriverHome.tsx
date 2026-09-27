@@ -10,7 +10,6 @@ import { EmptyState, ErrorState, LoadingState, Notice, Skeleton, Spinner, StaleB
 import { riderColor } from '../components/riderColors'
 import { POLL_MS, useNow, useResource } from '../lib/useResource'
 import { POOL_STATUS_LABEL, firstName, plural, relativeTime } from '../lib/format'
-import { POOL_WINDOW_MINUTES } from '../lib/policy'
 
 const TRIP_STEPS = [
   { key: 'FORMING',        label: 'Forming' },
@@ -271,8 +270,8 @@ function ActivePool({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4 sm:px-6">
         <div className="flex items-center gap-3">
           <StatusBadge status={pool.status} />
-          {pool.status === 'FORMING' && (
-            <WindowTimer createdAt={pool.createdAt} now={now} />
+          {pool.status === 'FORMING' && pool.waitUntil && (
+            <WindowTimer waitUntil={pool.waitUntil} now={now} />
           )}
         </div>
         <div className="flex items-center gap-3">
@@ -363,9 +362,13 @@ function ActivePool({
   )
 }
 
-function WindowTimer({ createdAt, now }: { createdAt: string; now: number }) {
-  const closesAt = new Date(createdAt).getTime() + POOL_WINDOW_MINUTES * 60_000
-  const left = Math.max(0, closesAt - now)
+/**
+ * The deadline is a passenger's own choice, not the driver's — whoever aboard
+ * asked for the shortest wait sets this clock, and it only ever moves earlier
+ * as more people with less patience join. See docs/ASSUMPTIONS.md #13.
+ */
+function WindowTimer({ waitUntil, now }: { waitUntil: string; now: number }) {
+  const left = Math.max(0, new Date(waitUntil).getTime() - now)
   const mins = Math.floor(left / 60_000)
   const secs = Math.floor((left % 60_000) / 1000)
   const expired = left === 0
@@ -373,7 +376,7 @@ function WindowTimer({ createdAt, now }: { createdAt: string; now: number }) {
   return (
     <span
       className={`font-mono text-sm font-bold ${expired ? 'text-ink-3' : 'text-marigold'}`}
-      title="Riders can join while this window is open"
+      title="Set by whichever current passenger chose the shortest wait"
     >
       {expired ? 'window closed' : `${mins}:${String(secs).padStart(2, '0')} to join`}
     </span>
@@ -454,7 +457,6 @@ function RequestRow({
   poolId?: string
   run: (action: () => Promise<unknown>, success?: string) => Promise<void>
 }) {
-  const [waitForPool, setWaitForPool] = useState(false)
   const [busy, setBusy] = useState(false)
 
   async function accept() {
@@ -462,7 +464,7 @@ function RequestRow({
     await run(
       () => (hasPool && poolId
         ? api.joinPool(poolId, request.rideId)
-        : api.createPool(request.rideId, waitForPool)),
+        : api.createPool(request.rideId)),
       `${firstName(request.passengerName)} added`,
     )
     setBusy(false)
@@ -479,6 +481,9 @@ function RequestRow({
           </p>
           <p className="mt-0.5 font-mono text-[0.68rem] text-ink-3">
             {plural(request.seats, 'seat')} · {relativeTime(request.requestedAt)}
+            {request.waitMinutes > 0
+              ? ` · will wait ${request.waitMinutes} min`
+              : ' · won’t wait for others'}
           </p>
         </div>
       </div>
@@ -487,24 +492,6 @@ function RequestRow({
         <p className="mt-3 rounded-lg border border-alert/30 bg-alert-soft px-3 py-2 text-sm font-medium text-alert">
           {request.reason}
         </p>
-      )}
-
-      {/* The wait question only applies to the passenger who opens the pool. */}
-      {!hasPool && request.joinable && (
-        <label className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-lg border border-line bg-surface-2/40 px-3 py-2.5">
-          <input
-            type="checkbox"
-            checked={waitForPool}
-            onChange={e => setWaitForPool(e.target.checked)}
-            className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--signal)]"
-          />
-          <span className="text-sm leading-snug">
-            <span className="font-semibold">Wait for another passenger?</span>
-            <span className="block text-ink-3">
-              Keeps the pool open {POOL_WINDOW_MINUTES} minutes — both riders then pay 20% less.
-            </span>
-          </span>
-        </label>
       )}
 
       <button

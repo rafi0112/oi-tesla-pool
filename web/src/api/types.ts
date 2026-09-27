@@ -78,7 +78,8 @@ export interface DriverPool {
   seatsAvailable: number
   seatCapacity: number
   originZone: ZoneRef
-  waitForPool: boolean
+  /** Null: no one aboard is waiting for more. A timestamp: the live deadline. */
+  waitUntil: string | null
   createdAt: string
   passengers: DriverPassenger[]
 }
@@ -87,6 +88,8 @@ export interface DriverRequest {
   rideId: string
   passengerName: string
   seats: number
+  /** The passenger's own choice — the driver no longer decides this. */
+  waitMinutes: number
   pickupZone: ZoneRef
   destinationZone: ZoneRef
   requestedAt: string

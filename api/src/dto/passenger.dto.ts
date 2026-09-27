@@ -1,7 +1,7 @@
 import { RideRow } from '../repositories/ride.repo'
 import { fareFor } from '../domain/fare'
+import { canTransition } from '../domain/stateMachine'
 
-const CANCELLABLE = new Set(['REQUESTED', 'MATCHED'])
 const ACTIVE_IN_POOL = new Set(['MATCHED', 'PICKED_UP'])
 
 export interface PassengerRideDTO {
@@ -45,7 +45,7 @@ export function toPassengerRideDTO(r: RideRow): PassengerRideDTO {
     seats:            r.seats,
     poolId:           r.pool_id,
     sharedWith:       r.shared_with,
-    canCancel:        CANCELLABLE.has(r.status),
+    canCancel:        canTransition('ride', r.status, 'CANCELLED'),
     createdAt:        r.created_at,
   }
 }

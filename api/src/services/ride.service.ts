@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { withTransaction } from '../db/pool'
 import { getDistance } from '../repositories/zone.repo'
 import { soloFare } from '../domain/fare'
+import { POOL_POLICY } from '../domain/matching'
 import {
   findRideById,
   findRideByIdempotencyKey,
@@ -14,7 +15,7 @@ import { ConflictError, NotFoundError } from '../errors'
 export const createRideSchema = z.object({
   pickupZoneId:      z.number().int().positive(),
   destinationZoneId: z.number().int().positive(),
-  seats:             z.number().int().min(1).max(3),
+  seats:             z.number().int().min(1).max(POOL_POLICY.maxSeatsPerBooking),
 })
 
 export async function requestRide(
@@ -35,6 +36,7 @@ export async function requestRide(
   const distanceKm = await getDistance(data.pickupZoneId, data.destinationZoneId)
   if (distanceKm === null) throw new NotFoundError('No route between these zones')
 
+  // Booked alone so far, so the solo rate. Seats do not change the fare.
   const quotedFarePaisa = soloFare(distanceKm)
 
   try {

@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express'
 import { z } from 'zod'
 import { getDistance } from '../repositories/zone.repo'
 import { soloFare, pooledFare } from '../domain/fare'
+import { POOL_POLICY } from '../domain/matching'
 import { NotFoundError } from '../errors'
 import { requestRide, getMyRides, getRideById, createRideSchema } from '../services/ride.service'
 import { AuthedRequest } from './auth.controller'
@@ -11,7 +12,7 @@ export { createRideSchema }
 export const quoteSchema = z.object({
   pickupZoneId:      z.number().int().positive(),
   destinationZoneId: z.number().int().positive(),
-  seats:             z.number().int().min(1).max(3),
+  seats:             z.number().int().min(1).max(POOL_POLICY.maxSeatsPerBooking),
 })
 
 export async function createRideHandler(req: Request, res: Response, next: NextFunction) {

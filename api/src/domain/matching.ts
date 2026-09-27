@@ -2,6 +2,9 @@ export const POOL_POLICY = {
   detourCapKm:       3.0,
   poolWindowMinutes: 10,
   maxBearingDiffDeg: 90,
+  // Upper sanity bound for a booking — the binding limit is the vehicle's own
+  // seat_capacity, checked at pool creation and again on every join.
+  maxSeatsPerBooking: 3,
 }
 
 export interface Zone {

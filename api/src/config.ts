@@ -1,5 +1,10 @@
+import path from 'path'
 import dotenv from 'dotenv'
-dotenv.config()
+
+// .env lives at the repo root, shared with docker-compose, but npm scripts run
+// from api/. Resolve it explicitly rather than relying on the working directory.
+// In Docker the variables are supplied directly and the missing file is a no-op.
+dotenv.config({ path: path.resolve(__dirname, '../../.env') })
 
 function requireEnv(key: string): string {
   const value = process.env[key]

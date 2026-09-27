@@ -14,6 +14,15 @@ export async function getAllZones(): Promise<ZoneRow[]> {
   return rows.map(r => ({ id: r.id, name: r.name, lat: Number(r.lat), lng: Number(r.lng) }))
 }
 
+export async function findZoneById(id: number): Promise<ZoneRow | null> {
+  const { rows } = await db.query<RawZone>(
+    `SELECT id, name, lat, lng FROM zones WHERE id = $1`,
+    [id],
+  )
+  const r = rows[0]
+  return r ? { id: r.id, name: r.name, lat: Number(r.lat), lng: Number(r.lng) } : null
+}
+
 export async function getZoneMap(): Promise<Map<number, Zone>> {
   const zones = await getAllZones()
   return new Map(zones.map(z => [z.id, z]))

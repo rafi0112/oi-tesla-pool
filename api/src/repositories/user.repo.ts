@@ -28,6 +28,21 @@ export async function findUserById(id: string): Promise<UserRow | null> {
   return rows[0] ?? null
 }
 
+export async function updateDriverAvailability(
+  driverId: string,
+  isOnline: boolean,
+  zoneId: number | null,
+): Promise<UserRow> {
+  const { rows } = await db.query<UserRow>(
+    `UPDATE users
+        SET is_online = $2, current_zone_id = $3
+      WHERE id = $1
+      RETURNING *`,
+    [driverId, isOnline, zoneId],
+  )
+  return rows[0]
+}
+
 export async function createUser(
   tx: PoolClient,
   data: { name: string; email: string; passwordHash: string; role: 'PASSENGER' | 'DRIVER' },

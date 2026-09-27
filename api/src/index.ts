@@ -6,6 +6,7 @@ import { errorHandler } from './middleware/errorHandler'
 import authRoutes from './routes/auth.routes'
 import rideRoutes from './routes/ride.routes'
 import poolRoutes from './routes/pool.routes'
+import driverRoutes from './routes/driver.routes'
 
 const app = express()
 
@@ -19,6 +20,7 @@ app.get('/health', (_req, res) => {
 
 app.use('/auth', authRoutes)
 app.use('/pools', poolRoutes)
+app.use('/drivers', driverRoutes)
 app.use('/', rideRoutes)
 
 // error handler must be last

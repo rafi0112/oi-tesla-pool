@@ -1,4 +1,22 @@
 import { PoolRow, PoolMemberRow } from '../repositories/pool.repo'
+import { UserRow } from '../repositories/user.repo'
+import { ZoneRow } from '../repositories/zone.repo'
+
+export interface DriverProfileDTO {
+  id: string
+  name: string
+  isOnline: boolean
+  currentZone: { id: number; name: string } | null
+}
+
+export function toDriverProfileDTO(u: UserRow, zone: ZoneRow | null): DriverProfileDTO {
+  return {
+    id:          u.id,
+    name:        u.name,
+    isOnline:    u.is_online,
+    currentZone: zone ? { id: zone.id, name: zone.name } : null,
+  }
+}
 
 export interface DriverPoolDTO {
   id: string

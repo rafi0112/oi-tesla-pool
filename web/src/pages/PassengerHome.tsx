@@ -14,6 +14,7 @@ import { bearingDeg, compassPoint } from '../lib/geo'
 import {
   clockTime, firstName, formatTaka, plural, RIDE_STATUS_LABEL, shortDate,
 } from '../lib/format'
+import { WAIT_MINUTES_OPTIONS } from '../lib/policy'
 
 const ACTIVE: ReadonlySet<RideStatus> = new Set(['REQUESTED', 'MATCHED', 'PICKED_UP'])
 const MAX_SEATS = 3
@@ -121,8 +122,10 @@ function BookingTicket({ zones, onBooked }: { zones: Zone[]; onBooked: (joinAtte
   const [pickupId, setPickupId] = useState<number>(defaultPickup)
   const [destinationId, setDestinationId] = useState<number | null>(null)
   const [seats, setSeats] = useState(1)
-  const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState(false)
+  const [waitMinutes, setWaitMinutes] = useState(0)
+  // 'solo' for the main button, a pool id for a specific row's Join button —
+  // tracked separately so only the button actually clicked shows a spinner.
+  const [submitting, setSubmitting] = useState<'solo' | string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   // One key per booking attempt: a network retry re-sends the same key, so the
@@ -143,17 +146,6 @@ function BookingTicket({ zones, onBooked }: { zones: Zone[]; onBooked: (joinAtte
     { enabled: ready, pollMs: POLL_MS, key: tripKey },
   )
 
-  // A different trip invalidates whatever was chosen for the old one.
-  useEffect(() => setSelectedPoolId(null), [tripKey])
-
-  // If the poll shows the chosen pool filled up or closed its window, fall
-  // back to "book new" rather than silently submitting a stale choice.
-  useEffect(() => {
-    if (selectedPoolId && pools.data && !pools.data.some(p => p.id === selectedPoolId && p.joinable)) {
-      setSelectedPoolId(null)
-    }
-  }, [pools.data, selectedPoolId])
-
   const pickup = zones.find(z => z.id === pickupId)
   const destination = zones.find(z => z.id === destinationId)
   const heading = pickup && destination ? bearingDeg(pickup, destination) : null
@@ -167,20 +159,20 @@ function BookingTicket({ zones, onBooked }: { zones: Zone[]; onBooked: (joinAtte
     if (id !== pickupId) setDestinationId(id)
   }
 
-  async function book() {
+  async function book(poolId?: string) {
     if (!ready) return
-    setSubmitting(true)
+    setSubmitting(poolId ?? 'solo')
     setError(null)
     try {
       const { joinAttempt } = await api.bookRide(
-        { pickupZoneId: pickupId, destinationZoneId: destinationId!, seats, poolId: selectedPoolId ?? undefined },
+        { pickupZoneId: pickupId, destinationZoneId: destinationId!, seats, waitMinutes, poolId },
         idempotencyKey.current,
       )
       idempotencyKey.current = crypto.randomUUID()
       await onBooked(joinAttempt)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Booking failed')
-      setSubmitting(false)
+      setSubmitting(null)
     }
   }
 
@@ -246,6 +238,34 @@ function BookingTicket({ zones, onBooked }: { zones: Zone[]; onBooked: (joinAtte
             )}
           </fieldset>
 
+          <fieldset>
+            <legend className="mb-2 flex w-full items-baseline justify-between">
+              <span className="text-sm font-semibold text-ink-2">How long can you wait?</span>
+              <span className="text-xs text-ink-3">your call, not the driver’s</span>
+            </legend>
+            <div role="radiogroup" aria-label="Wait time" className="inline-flex flex-wrap gap-1 rounded-xl border border-line-2 bg-surface-2 p-1">
+              {WAIT_MINUTES_OPTIONS.map(opt => (
+                <button
+                  key={opt.minutes}
+                  type="button"
+                  role="radio"
+                  aria-checked={waitMinutes === opt.minutes}
+                  onClick={() => setWaitMinutes(opt.minutes)}
+                  className={`rounded-lg px-3 py-1.5 font-mono text-xs font-bold transition-all ${
+                    waitMinutes === opt.minutes ? 'bg-ink text-paper shadow-sm' : 'text-ink-2 hover:text-ink'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-ink-3">
+              {waitMinutes === 0
+                ? 'You’ll depart as soon as the driver accepts — no one else can join in time.'
+                : `The pool stays open ${waitMinutes} min for others, or less if a later rider asks for a shorter wait.`}
+            </p>
+          </fieldset>
+
           {ready && (
             <div>
               <p className="eyebrow mb-2">Riders already heading this way</p>
@@ -253,8 +273,8 @@ function BookingTicket({ zones, onBooked }: { zones: Zone[]; onBooked: (joinAtte
                 pools={pools.data}
                 loading={pools.loading}
                 error={pools.error}
-                selectedId={selectedPoolId}
-                onSelect={setSelectedPoolId}
+                submitting={submitting}
+                onJoin={id => void book(id)}
               />
             </div>
           )}
@@ -317,10 +337,15 @@ function BookingTicket({ zones, onBooked }: { zones: Zone[]; onBooked: (joinAtte
 
         <div className="flex flex-col items-stretch gap-2 sm:items-end">
           {error && <Notice tone="error" onDismiss={() => setError(null)}>{error}</Notice>}
-          <button type="button" onClick={book} disabled={!ready || submitting} className="btn-primary !px-7 !py-4 text-base">
-            {submitting ? <Spinner /> : null}
-            {submitting ? 'Requesting' : selectedPoolId ? 'Join pool & request' : 'Request Bullet'}
-            {!submitting && <span aria-hidden>→</span>}
+          <button
+            type="button"
+            onClick={() => void book()}
+            disabled={!ready || submitting !== null}
+            className="btn-primary !px-7 !py-4 text-base"
+          >
+            {submitting === 'solo' ? <Spinner /> : null}
+            {submitting === 'solo' ? 'Requesting' : 'Request Bullet'}
+            {submitting !== 'solo' && <span aria-hidden>→</span>}
           </button>
         </div>
       </div>
@@ -329,13 +354,13 @@ function BookingTicket({ zones, onBooked }: { zones: Zone[]; onBooked: (joinAtte
 }
 
 function NearbyPools({
-  pools, loading, error, selectedId, onSelect,
+  pools, loading, error, submitting, onJoin,
 }: {
   pools: PoolOption[] | undefined
   loading: boolean
   error: ApiError | null
-  selectedId: string | null
-  onSelect: (id: string | null) => void
+  submitting: string | null
+  onJoin: (poolId: string) => void
 }) {
   if (loading && !pools) return <Skeleton className="h-11" />
   if (error) return <p className="text-sm text-alert">{error.message}</p>
@@ -349,33 +374,17 @@ function NearbyPools({
   }
 
   return (
-    <div className="space-y-2">
-      <button
-        type="button"
-        onClick={() => onSelect(null)}
-        aria-pressed={selectedId === null}
-        className={`flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-left transition-colors ${
-          selectedId === null ? 'border-signal bg-signal-soft' : 'border-line bg-surface-2/40 hover:border-line-2'
-        }`}
-      >
-        <span className="text-sm font-semibold text-ink">Book my own pool</span>
-        <span className="text-xs text-ink-3">Solo for now</span>
-      </button>
-
+    <ul className="space-y-2">
       {pools.map(p => (
-        <button
+        <li
           key={p.id}
-          type="button"
-          disabled={!p.joinable}
-          onClick={() => onSelect(p.id)}
-          aria-pressed={selectedId === p.id}
-          className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-            selectedId === p.id ? 'border-signal bg-signal-soft' : 'border-line bg-surface-2/40 hover:border-line-2 disabled:hover:border-line'
+          className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 ${
+            p.joinable ? 'border-line bg-surface-2/40' : 'border-line bg-surface-2/20 opacity-70'
           }`}
         >
           <span className="min-w-0">
             <span className="block truncate text-sm font-semibold text-ink">
-              Join {firstName(p.driverName)}’s {p.vehicleName}
+              {firstName(p.driverName)}’s {p.vehicleName}
             </span>
             <span className="block truncate text-xs text-ink-3">
               {p.joinable
@@ -383,14 +392,24 @@ function NearbyPools({
                 : p.reason}
             </span>
           </span>
+
           {p.joinable && (
             <span className="shrink-0 font-mono text-xs font-bold text-signal">
               {Math.floor(p.windowClosesInSeconds / 60)}:{String(p.windowClosesInSeconds % 60).padStart(2, '0')}
             </span>
           )}
-        </button>
+
+          <button
+            type="button"
+            disabled={!p.joinable || submitting !== null}
+            onClick={() => onJoin(p.id)}
+            className="btn-primary shrink-0 !px-4 !py-2 text-sm"
+          >
+            {submitting === p.id ? <Spinner /> : 'Join'}
+          </button>
+        </li>
       ))}
-    </div>
+    </ul>
   )
 }
 

@@ -13,6 +13,7 @@ import {
   countAllBookingsInPool,
 } from '../repositories/ride.repo'
 import { lockPoolById, releaseSeats } from '../repositories/pool.repo'
+import { updateUserZone } from '../repositories/user.repo'
 import { attemptSelfJoin, JoinAttempt } from './pool.service'
 import { transitionRide, transitionPool } from './transition'
 import { findRideEvents } from '../repositories/event.repo'
@@ -62,8 +63,8 @@ export async function requestRide(
 
   let ride
   try {
-    ride = await withTransaction(tx =>
-      createRide(tx, {
+    ride = await withTransaction(async tx => {
+      const created = await createRide(tx, {
         passengerId,
         pickupZoneId:      data.pickupZoneId,
         destinationZoneId: data.destinationZoneId,
@@ -71,8 +72,13 @@ export async function requestRide(
         waitMinutes:       data.waitMinutes,
         quotedFarePaisa,
         idempotencyKey,
-      }),
-    )
+      })
+      // Booking from a zone is "being there" — the same signal a driver gives
+      // by manually setting their zone. Kept in sync automatically so a
+      // passenger's next visit already shows where they last requested from.
+      await updateUserZone(passengerId, data.pickupZoneId, tx)
+      return created
+    })
   } catch (err: unknown) {
     // unique violation on one_active_ride_per_passenger index
     if ((err as { code?: string }).code === '23505') {

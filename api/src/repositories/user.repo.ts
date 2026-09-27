@@ -43,6 +43,27 @@ export async function updateDriverAvailability(
   return rows[0]
 }
 
+/**
+ * Anything that can run a query — the shared pool, or a transaction client.
+ * Passengers have no online/offline gate the way drivers do, so setting their
+ * location is just this one column, and it needs to work both standalone (an
+ * explicit "set my location" action) and inside a booking's own transaction
+ * (kept in sync automatically every time they request a ride).
+ */
+type Queryable = Pick<PoolClient, 'query'>
+
+export async function updateUserZone(
+  userId: string,
+  zoneId: number | null,
+  exec: Queryable = db as unknown as Queryable,
+): Promise<UserRow> {
+  const { rows } = await exec.query<UserRow>(
+    `UPDATE users SET current_zone_id = $2 WHERE id = $1 RETURNING *`,
+    [userId, zoneId],
+  )
+  return rows[0]
+}
+
 export async function createUser(
   tx: PoolClient,
   data: { name: string; email: string; passwordHash: string; role: 'PASSENGER' | 'DRIVER' },

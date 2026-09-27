@@ -1,5 +1,7 @@
 import { RideRow } from '../repositories/ride.repo'
 import { StatusEventRow } from '../repositories/event.repo'
+import { UserRow } from '../repositories/user.repo'
+import { ZoneRow } from '../repositories/zone.repo'
 import { fareFor } from '../domain/fare'
 import { canTransition } from '../domain/stateMachine'
 
@@ -57,6 +59,21 @@ export function toRideEventDTO(e: StatusEventRow, passengerId: string): RideEven
     actor,
     reason:     e.reason,
     at:         e.created_at,
+  }
+}
+
+export interface PassengerProfileDTO {
+  id: string
+  name: string
+  /** Where this passenger last booked from, or explicitly set as their location. */
+  currentZone: { id: number; name: string } | null
+}
+
+export function toPassengerProfileDTO(u: UserRow, zone: ZoneRow | null): PassengerProfileDTO {
+  return {
+    id:          u.id,
+    name:        u.name,
+    currentZone: zone ? { id: zone.id, name: zone.name } : null,
   }
 }
 

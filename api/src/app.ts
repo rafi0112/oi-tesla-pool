@@ -7,6 +7,7 @@ import authRoutes from './routes/auth.routes'
 import rideRoutes from './routes/ride.routes'
 import poolRoutes from './routes/pool.routes'
 import driverRoutes from './routes/driver.routes'
+import passengerRoutes from './routes/passenger.routes'
 
 export function createApp() {
   const app = express()
@@ -23,6 +24,7 @@ export function createApp() {
   app.use('/auth', authRoutes)
   app.use('/pools', poolRoutes)
   app.use('/drivers', driverRoutes)
+  app.use('/passengers', passengerRoutes)
   app.use('/', rideRoutes)
 
   // error handler must be last

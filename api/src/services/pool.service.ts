@@ -3,12 +3,13 @@ import { withTransaction } from '../db/pool'
 import { findUserById } from '../repositories/user.repo'
 import {
   findRideById, setRidePool, lockRideById,
-  lockMatchedMembers, setFinalFare,
+  lockMatchedMembers, setFinalFare, countPickedUpInPool,
 } from '../repositories/ride.repo'
 import {
   findVehicleByDriver,
   findPoolById,
   findPoolByIdForDriver,
+  findActivePoolByDriver,
   findPoolMembers,
   createPool as insertPool,
   claimSeats,
@@ -206,6 +207,86 @@ export function joinRejectionMessage(reason: string | undefined): string {
     case 'detour_too_long':       return 'Adding that passenger would detour the trip too far'
     default:                      return 'That passenger cannot join this pool'
   }
+}
+
+/** Shared by the actions whose only effect is a pool status change. */
+async function transitionOwnedPool(
+  driverId: string,
+  poolId: string,
+  next: string,
+): Promise<DriverPoolDTO> {
+  const owned = await findPoolByIdForDriver(poolId, driverId)
+  if (!owned) throw new NotFoundError('Pool not found')
+
+  await withTransaction(async tx => {
+    const pool = await lockPoolById(tx, poolId)
+    if (!pool) throw new NotFoundError('Pool not found')
+    await transitionPool(tx, pool, next, driverId)
+  })
+
+  return loadPoolDTO(poolId)
+}
+
+/** Ends the assembling window. The transition table refuses a non-FORMING pool. */
+export function closePool(driverId: string, poolId: string): Promise<DriverPoolDTO> {
+  return transitionOwnedPool(driverId, poolId, 'ACCEPTED')
+}
+
+export function markArrived(driverId: string, poolId: string): Promise<DriverPoolDTO> {
+  return transitionOwnedPool(driverId, poolId, 'DRIVER_ARRIVED')
+}
+
+/** Drops one passenger. PICKED_UP is the only status with a DROPPED_OFF edge. */
+export async function dropOffPassenger(
+  driverId: string,
+  poolId: string,
+  rideId: string,
+): Promise<DriverPoolDTO> {
+  const owned = await findPoolByIdForDriver(poolId, driverId)
+  if (!owned) throw new NotFoundError('Pool not found')
+
+  await withTransaction(async tx => {
+    await lockPoolById(tx, poolId)
+
+    const ride = await lockRideById(tx, rideId)
+    if (!ride || ride.pool_id !== poolId) {
+      throw new NotFoundError('Ride not found in this pool')
+    }
+
+    await transitionRide(tx, ride, 'DROPPED_OFF', driverId)
+  })
+
+  return loadPoolDTO(poolId)
+}
+
+export async function completeTrip(driverId: string, poolId: string): Promise<DriverPoolDTO> {
+  const owned = await findPoolByIdForDriver(poolId, driverId)
+  if (!owned) throw new NotFoundError('Pool not found')
+
+  await withTransaction(async tx => {
+    const pool = await lockPoolById(tx, poolId)
+    if (!pool) throw new NotFoundError('Pool not found')
+
+    const stillAboard = await countPickedUpInPool(tx, poolId)
+    if (stillAboard > 0) {
+      throw new ConflictError(
+        'INVALID_TRANSITION',
+        'Drop off every passenger before completing the trip',
+        { stillAboard },
+      )
+    }
+
+    await transitionPool(tx, pool, 'COMPLETED', driverId)
+  })
+
+  return loadPoolDTO(poolId)
+}
+
+export async function getActivePool(driverId: string): Promise<DriverPoolDTO | null> {
+  const pool = await findActivePoolByDriver(driverId)
+  if (!pool) return null
+  const members = await findPoolMembers(pool.id)
+  return toDriverPoolDTO(pool, members)
 }
 
 /**

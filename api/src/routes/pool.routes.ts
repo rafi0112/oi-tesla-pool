@@ -5,15 +5,24 @@ import { requireRole } from '../middleware/requireRole'
 import {
   createPoolSchema, createPoolHandler,
   joinPoolSchema, joinPoolHandler,
-  startTripHandler,
+  activePoolHandler, closePoolHandler, arriveHandler,
+  startTripHandler, dropoffHandler, completeTripHandler,
 } from '../controllers/pool.controller'
 
 const router = Router()
 
 router.use(authenticate, requireRole('DRIVER'))
 
-router.post('/',           validate(createPoolSchema), createPoolHandler)
-router.post('/:id/rides',  validate(joinPoolSchema),   joinPoolHandler)
-router.post('/:id/start',  startTripHandler)
+// Must precede any /:id route so "active" is not read as a pool id.
+router.get('/active', activePoolHandler)
+
+router.post('/', validate(createPoolSchema), createPoolHandler)
+
+router.post('/:id/rides',    validate(joinPoolSchema), joinPoolHandler)
+router.post('/:id/close',    closePoolHandler)
+router.post('/:id/arrive',   arriveHandler)
+router.post('/:id/start',    startTripHandler)
+router.post('/:id/complete', completeTripHandler)
+router.post('/:id/rides/:rideId/dropoff', dropoffHandler)
 
 export default router

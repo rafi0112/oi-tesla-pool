@@ -15,40 +15,68 @@ export interface RideRow {
   status: string
   idempotency_key: string | null
   created_at: string
+  /** Trip length, used to recompute the displayed fare from live membership. */
+  distance_km: number | null
+  /** Other active bookings sharing this ride's pool — excludes this row. */
+  shared_with: number
+}
+
+// distance_km is NUMERIC and shared_with is a COUNT, both of which pg hands back
+// as strings; mapRide coerces them so callers only ever see numbers.
+interface RawRideRow extends Omit<RideRow, 'distance_km' | 'shared_with'> {
+  distance_km: string | null
+  shared_with: string
 }
 
 const SELECT_RIDE = `
   SELECT r.*,
          pz.name AS pickup_zone_name,
-         dz.name AS destination_zone_name
+         dz.name AS destination_zone_name,
+         zd.distance_km,
+         (SELECT COUNT(*)
+            FROM ride_requests peer
+           WHERE peer.pool_id = r.pool_id
+             AND peer.id <> r.id
+             AND peer.status IN ('MATCHED','PICKED_UP')) AS shared_with
   FROM   ride_requests r
   JOIN   zones pz ON pz.id = r.pickup_zone_id
   JOIN   zones dz ON dz.id = r.destination_zone_id
+  LEFT JOIN zone_distances zd
+         ON zd.from_zone_id = r.pickup_zone_id
+        AND zd.to_zone_id   = r.destination_zone_id
 `
+
+function mapRide(r: RawRideRow): RideRow {
+  return {
+    ...r,
+    distance_km: r.distance_km === null ? null : Number(r.distance_km),
+    shared_with: Number(r.shared_with),
+  }
+}
 
 export async function findRideById(id: string, passengerId?: string): Promise<RideRow | null> {
   const where = passengerId
     ? `WHERE r.id = $1 AND r.passenger_id = $2`
     : `WHERE r.id = $1`
   const params = passengerId ? [id, passengerId] : [id]
-  const { rows } = await db.query<RideRow>(`${SELECT_RIDE} ${where}`, params)
-  return rows[0] ?? null
+  const { rows } = await db.query<RawRideRow>(`${SELECT_RIDE} ${where}`, params)
+  return rows[0] ? mapRide(rows[0]) : null
 }
 
 export async function findRideByIdempotencyKey(key: string): Promise<RideRow | null> {
-  const { rows } = await db.query<RideRow>(
+  const { rows } = await db.query<RawRideRow>(
     `${SELECT_RIDE} WHERE r.idempotency_key = $1`,
     [key],
   )
-  return rows[0] ?? null
+  return rows[0] ? mapRide(rows[0]) : null
 }
 
 export async function findRidesByPassenger(passengerId: string): Promise<RideRow[]> {
-  const { rows } = await db.query<RideRow>(
+  const { rows } = await db.query<RawRideRow>(
     `${SELECT_RIDE} WHERE r.passenger_id = $1 ORDER BY r.created_at DESC`,
     [passengerId],
   )
-  return rows
+  return rows.map(mapRide)
 }
 
 export async function createRide(

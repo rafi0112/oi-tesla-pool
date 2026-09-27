@@ -1,4 +1,5 @@
 import { RideRow } from '../repositories/ride.repo'
+import { StatusEventRow } from '../repositories/event.repo'
 import { fareFor } from '../domain/fare'
 import { canTransition } from '../domain/stateMachine'
 
@@ -31,6 +32,30 @@ function effectiveFarePaisa(r: RideRow): number {
 
   const activeBookings = r.shared_with + (ACTIVE_IN_POOL.has(r.status) ? 1 : 0)
   return fareFor(r.distance_km, activeBookings)
+}
+
+export interface RideEventDTO {
+  fromStatus: string | null
+  toStatus: string
+  actor: 'passenger' | 'driver' | 'system'
+  reason: string | null
+  at: string
+}
+
+// The actor is reported by role, never by id — a passenger has no use for
+// another user's UUID.
+export function toRideEventDTO(e: StatusEventRow, passengerId: string): RideEventDTO {
+  const actor = e.actor_user_id === null
+    ? 'system'
+    : e.actor_user_id === passengerId ? 'passenger' : 'driver'
+
+  return {
+    fromStatus: e.from_status,
+    toStatus:   e.to_status,
+    actor,
+    reason:     e.reason,
+    at:         e.created_at,
+  }
 }
 
 export function toPassengerRideDTO(r: RideRow): PassengerRideDTO {

@@ -37,8 +37,8 @@ export async function getMyRidesHandler(req: Request, res: Response, next: NextF
 
 export async function getRideByIdHandler(req: Request, res: Response, next: NextFunction) {
   try {
-    const ride = await getRideById(req.params.id, (req as AuthedRequest).user.id)
-    res.json({ ride })
+    const detail = await getRideById(req.params.id, (req as AuthedRequest).user.id)
+    res.json(detail)
   } catch (err) {
     next(err)
   }

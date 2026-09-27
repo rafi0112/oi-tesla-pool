@@ -9,7 +9,11 @@ import {
   findRidesByPassenger,
   createRide,
 } from '../repositories/ride.repo'
-import { toPassengerRideDTO, PassengerRideDTO } from '../dto/passenger.dto'
+import { findRideEvents } from '../repositories/event.repo'
+import {
+  toPassengerRideDTO, PassengerRideDTO,
+  toRideEventDTO, RideEventDTO,
+} from '../dto/passenger.dto'
 import { ConflictError, NotFoundError } from '../errors'
 
 export const createRideSchema = z.object({
@@ -65,8 +69,18 @@ export async function getMyRides(passengerId: string): Promise<PassengerRideDTO[
   return rides.map(toPassengerRideDTO)
 }
 
-export async function getRideById(id: string, passengerId: string): Promise<PassengerRideDTO> {
+export interface RideDetail {
+  ride: PassengerRideDTO
+  timeline: RideEventDTO[]
+}
+
+export async function getRideById(id: string, passengerId: string): Promise<RideDetail> {
   const ride = await findRideById(id, passengerId)
   if (!ride) throw new NotFoundError('Ride not found')
-  return toPassengerRideDTO(ride)
+
+  const events = await findRideEvents(ride.id)
+  return {
+    ride:     toPassengerRideDTO(ride),
+    timeline: events.map(e => toRideEventDTO(e, passengerId)),
+  }
 }

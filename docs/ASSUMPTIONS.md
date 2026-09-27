@@ -56,7 +56,31 @@ Each is implemented consistently throughout the codebase and seed data.
     The brief states "Cash or simulated TeslaPay wallet — no real gateway needed."
     The MVP records a fare paisa amount; actual transfer of funds is out of scope.
 
-11. **Direction alignment uses a 90° bearing-diff threshold on seeded coordinates.**
+11. **A booking may reserve 1–3 seats, and extra seats within that one booking cost
+    nothing extra.**
+    `ride_requests.seats` lets one passenger reserve several seats — the additional
+    seats carry a friend or relative travelling with them, so that booking pays a
+    single fare with no per-seat multiplier. `seats` is therefore a capacity concept
+    only: it is what the atomic seat claim decrements and what `canJoin` condition 2
+    tests, but it never enters the fare calculation.
+
+    **The flat-seat rule is scoped to a single booking and never merges separate
+    ones.** One fare is charged per `ride_requests` row. Two passengers who each book
+    one seat are two rows and pay two fares — they do not share one fare just because
+    they share the vehicle. The pool discount is what they get for sharing.
+
+    | Bookings in the pool | Seats used | Fares charged |
+    |---|---|---|
+    | Nusrat books 2 | 2 of 3 | 1 fare, solo rate — she is the only booking |
+    | Nusrat books 3 | 3 of 3 | 1 fare, solo rate — a private group, not a pool |
+    | Nusrat 2 + Rafiq 1 | 3 of 3 | 2 fares, both at the pooled rate |
+    | Nusrat 1 + Rafiq 1 | 2 of 3 | 2 fares, both at the pooled rate |
+
+    The trade-off is accepted deliberately: a multi-seat booking earns the driver less
+    than the same seats sold to separate passengers, in exchange for a fare that is
+    honest about who is actually sharing the ride.
+
+12. **Direction alignment uses a 90° bearing-diff threshold on seeded coordinates.**
     Each zone carries a fixed approximate lat/lng (real Dhaka neighbourhood centroids).
     `canJoin` computes the compass bearing from the origin to every active destination
     and to the candidate destination using `Math.atan2`. If any pair of bearings

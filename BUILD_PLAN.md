@@ -116,6 +116,21 @@ when the trip starts (`EN_ROUTE`) and never changes afterwards. Before the trip
 starts, a passenger's displayed fare is recomputed from current pool membership —
 so if Rafiq cancels before pickup, Nusrat reverts to the solo fare.
 
+**Multi-seat bookings do not change the fare.** A passenger may reserve 1–3 seats
+in one booking (`ride_requests.seats`). Extra seats carry a friend or relative, so
+that booking pays **one** fare regardless of seat count — there is no per-seat
+multiplier anywhere in the fare path. `seats` affects capacity only.
+
+**One fare per `ride_requests` row.** The flat-seat rule applies within a single
+booking and never merges two of them: two passengers who each book one seat are two
+rows and pay two fares. What they get for sharing is the discount, not a shared fare.
+
+Consequently the pool discount counts **bookings, not seats**: `activePassengerCount`
+in `fareFor` is the number of active `ride_requests` rows in the pool. One passenger
+holding all three of Bullet's seats is not a pool and pays the solo fare; two
+passengers sharing those three seats pay two pooled fares. `sharedWith` in the
+passenger DTO is likewise a count of other bookings.
+
 ### 3.2 Matching rule
 
 ```ts

@@ -1,5 +1,5 @@
 import type {
-  DriverPool, DriverProfile, DriverRequest, PassengerRide,
+  DriverPool, DriverProfile, DriverRequest, PassengerRide, PassengerProfile,
   Quote, RideEvent, User, Zone, PoolOption, JoinAttempt,
 } from './types'
 
@@ -110,6 +110,10 @@ export const api = {
       headers: { 'Idempotency-Key': idempotencyKey },
     }),
   cancelRide: (id: string) => request<{ ride: PassengerRide }>(`/rides/${id}/cancel`, { method: 'POST' }),
+
+  passengerProfile: () => request<{ passenger: PassengerProfile }>('/passengers/me'),
+  setPassengerLocation: (zoneId: number) =>
+    request<{ passenger: PassengerProfile }>('/passengers/me', { method: 'PATCH', body: { zoneId } }),
 
   driverProfile: () => request<{ driver: DriverProfile }>('/drivers/me'),
   setAvailability: (body: { isOnline: boolean; zoneId?: number }) =>

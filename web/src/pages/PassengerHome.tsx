@@ -30,6 +30,10 @@ export function PassengerHome() {
   const { user } = useAuth()
   const zones = useResource(() => api.zones().then(r => r.zones))
   const rides = useResource(() => api.myRides().then(r => r.rides), { pollMs: POLL_MS })
+  // Not polled and not on the loading/error critical path — the booking form
+  // falls back to Banani if this hasn't resolved yet or the passenger has
+  // never set a location, so a slow or failed fetch here costs nothing.
+  const profile = useResource(() => api.passengerProfile().then(r => r.passenger))
   const [notice, setNotice] = useState<{ tone: 'success' | 'info'; text: string } | null>(null)
 
   const active = rides.data?.find(r => ACTIVE.has(r.status))
@@ -80,7 +84,11 @@ export function PassengerHome() {
             ) : active && zones.data ? (
               <RideTicket ride={active} zones={zones.data} onChanged={rides.reload} />
             ) : zones.data ? (
-              <BookingTicket zones={zones.data} onBooked={afterBooked} />
+              <BookingTicket
+                zones={zones.data}
+                savedZoneId={profile.data?.currentZone?.id ?? null}
+                onBooked={afterBooked}
+              />
             ) : null}
           </section>
 
@@ -117,10 +125,27 @@ function Greeting({ name, ride }: { name: string; ride?: PassengerRide }) {
 
 /* ─────────────────────────────────────────────────────────── booking ── */
 
-function BookingTicket({ zones, onBooked }: { zones: Zone[]; onBooked: (joinAttempt?: JoinAttempt) => Promise<void> }) {
+function BookingTicket({
+  zones, savedZoneId, onBooked,
+}: {
+  zones: Zone[]
+  /** The passenger's last-used pickup zone, once their profile has loaded. */
+  savedZoneId: number | null
+  onBooked: (joinAttempt?: JoinAttempt) => Promise<void>
+}) {
   const defaultPickup = zones.find(z => z.name === 'Banani')?.id ?? zones[0].id
-  const [pickupId, setPickupId] = useState<number>(defaultPickup)
+  const [pickupId, setPickupId] = useState<number>(savedZoneId ?? defaultPickup)
   const [destinationId, setDestinationId] = useState<number | null>(null)
+
+  // The profile fetch resolves after this component has already mounted with
+  // the Banani fallback. Apply the saved zone once it arrives — but only if
+  // the passenger hasn't already picked something themselves in the meantime.
+  const appliedSavedZone = useRef(savedZoneId !== null)
+  useEffect(() => {
+    if (appliedSavedZone.current || savedZoneId === null) return
+    appliedSavedZone.current = true
+    setPickupId(savedZoneId)
+  }, [savedZoneId])
   const [seats, setSeats] = useState(1)
   const [waitMinutes, setWaitMinutes] = useState(0)
   // 'solo' for the main button, a pool id for a specific row's Join button —
@@ -151,6 +176,7 @@ function BookingTicket({ zones, onBooked }: { zones: Zone[]; onBooked: (joinAtte
   const heading = pickup && destination ? bearingDeg(pickup, destination) : null
 
   function choosePickup(id: number) {
+    appliedSavedZone.current = true // manual choice always wins over the saved default
     setPickupId(id)
     if (id === destinationId) setDestinationId(null)
   }
@@ -192,6 +218,7 @@ function BookingTicket({ zones, onBooked }: { zones: Zone[]; onBooked: (joinAtte
             <span aria-hidden className="absolute left-[0.6rem] top-[1.9rem] bottom-[1.9rem] w-[2px] rounded-full bg-gradient-to-b from-ink-3/60 to-signal" />
             <ZoneField
               label="From"
+              hint={savedZoneId === pickupId ? 'your last location' : undefined}
               dotClass="bg-ink border-ink"
               value={pickupId}
               zones={zones}
@@ -414,9 +441,11 @@ function NearbyPools({
 }
 
 function ZoneField({
-  label, dotClass, value, zones, onChange, placeholder,
+  label, hint, dotClass, value, zones, onChange, placeholder,
 }: {
   label: string
+  /** Small trailing note, e.g. "your last location" when this is a remembered default. */
+  hint?: string
   dotClass: string
   value: number | null
   zones: Zone[]
@@ -426,7 +455,10 @@ function ZoneField({
   return (
     <label className="relative block">
       <span aria-hidden className={`absolute -left-7 top-[1.9rem] h-3.5 w-3.5 rounded-full border-2 ring-4 ring-surface ${dotClass}`} />
-      <span className="mb-1.5 block eyebrow">{label}</span>
+      <span className="mb-1.5 flex items-baseline gap-1.5">
+        <span className="eyebrow">{label}</span>
+        {hint && <span className="text-[0.65rem] normal-case tracking-normal text-ink-3">· {hint}</span>}
+      </span>
       <span className="relative block">
         <select
           className="field appearance-none pr-10 font-semibold"

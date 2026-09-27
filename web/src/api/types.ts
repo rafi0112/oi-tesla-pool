@@ -55,6 +55,13 @@ export interface RideEvent {
   at: string
 }
 
+export interface PassengerProfile {
+  id: string
+  name: string
+  /** Where this passenger last booked from, or explicitly set as their location. */
+  currentZone: ZoneRef | null
+}
+
 export interface DriverProfile {
   id: string
   name: string

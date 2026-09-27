@@ -113,6 +113,22 @@ export async function createPool(
   return rows[0].id
 }
 
+/**
+ * Locks the pool row for the rest of the transaction. Concurrent cancellations
+ * must serialise here, or each would count the other as still active and neither
+ * would auto-cancel the emptied pool.
+ */
+export async function lockPoolById(
+  tx: PoolClient,
+  poolId: string,
+): Promise<{ id: string; status: string } | null> {
+  const { rows } = await tx.query<{ id: string; status: string }>(
+    `SELECT id, status FROM pools WHERE id = $1 FOR UPDATE`,
+    [poolId],
+  )
+  return rows[0] ?? null
+}
+
 export async function updatePoolStatus(
   tx: PoolClient,
   poolId: string,

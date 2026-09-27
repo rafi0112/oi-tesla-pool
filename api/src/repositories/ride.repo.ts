@@ -145,6 +145,15 @@ export async function setRidePool(
   await tx.query(`UPDATE ride_requests SET pool_id = $2 WHERE id = $1`, [rideId, poolId])
 }
 
+/** Every booking ever attached to the pool, whatever its status. */
+export async function countAllBookingsInPool(tx: PoolClient, poolId: string): Promise<number> {
+  const { rows } = await tx.query<{ count: string }>(
+    `SELECT COUNT(*) AS count FROM ride_requests WHERE pool_id = $1`,
+    [poolId],
+  )
+  return parseInt(rows[0].count, 10)
+}
+
 export async function countActivePassengersInPool(tx: PoolClient, poolId: string): Promise<number> {
   const { rows } = await tx.query<{ count: string }>(
     `SELECT COUNT(*) AS count FROM ride_requests

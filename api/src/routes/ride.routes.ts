@@ -3,7 +3,7 @@ import { validate } from '../middleware/validate'
 import {
   quoteSchema, quoteHandler,
   createRideSchema, createRideHandler,
-  getMyRidesHandler, getRideByIdHandler,
+  getMyRidesHandler, getRideByIdHandler, cancelRideHandler,
 } from '../controllers/ride.controller'
 import { getAllZones } from '../repositories/zone.repo'
 import { authenticate } from '../middleware/auth'
@@ -26,5 +26,6 @@ router.post('/rides/quote', validate(quoteSchema), quoteHandler)
 router.post('/rides',       authenticate, requireRole('PASSENGER'), validate(createRideSchema), createRideHandler)
 router.get('/rides/mine',   authenticate, requireRole('PASSENGER'), getMyRidesHandler)
 router.get('/rides/:id',    authenticate, requireRole('PASSENGER'), getRideByIdHandler)
+router.post('/rides/:id/cancel', authenticate, requireRole('PASSENGER'), cancelRideHandler)
 
 export default router

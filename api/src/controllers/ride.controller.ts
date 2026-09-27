@@ -4,7 +4,9 @@ import { getDistance } from '../repositories/zone.repo'
 import { soloFare, pooledFare } from '../domain/fare'
 import { POOL_POLICY } from '../domain/matching'
 import { NotFoundError } from '../errors'
-import { requestRide, getMyRides, getRideById, createRideSchema } from '../services/ride.service'
+import {
+  requestRide, getMyRides, getRideById, cancelRide, createRideSchema,
+} from '../services/ride.service'
 import { AuthedRequest } from './auth.controller'
 
 export { createRideSchema }
@@ -39,6 +41,15 @@ export async function getRideByIdHandler(req: Request, res: Response, next: Next
   try {
     const detail = await getRideById(req.params.id, (req as AuthedRequest).user.id)
     res.json(detail)
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function cancelRideHandler(req: Request, res: Response, next: NextFunction) {
+  try {
+    const ride = await cancelRide((req as AuthedRequest).user.id, req.params.id)
+    res.json({ ride })
   } catch (err) {
     next(err)
   }

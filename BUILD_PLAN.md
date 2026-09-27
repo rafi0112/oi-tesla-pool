@@ -900,6 +900,36 @@ decision to make for someone else's booking.
 
 Commit: `feat(pool): let passengers, not drivers, set how long a pool waits`
 
+**E7.1 — Auto-close when the wait time runs out**
+
+E7 gave the deadline real teeth for joins (`canJoin` condition 5), but nothing
+made the pool's `status` column actually change when time ran out — a `FORMING`
+pool whose `wait_until` had already passed just sat there saying `FORMING`
+forever, correctly refusing new joins but visibly lying about its own state,
+until a driver happened to click **Close pool**. Worse: `POST /pools/:id/arrive`
+asserts the transition `ACCEPTED → DRIVER_ARRIVED`; against a stale `FORMING`
+row that assertion fails with `INVALID_TRANSITION`, even though the window had
+plainly expired. A real driver clicking "I've arrived" after the wait time
+elapsed, before ever loading the pool screen again, would have hit that error.
+
+There is no scheduler in this project (§1 rule 5 — no queue, no cron), so the
+transition is lazy: every function that fetches a pool by id first calls
+`autoCloseIfExpired`, which — only when `status === 'FORMING'` and
+`wait_until` is in the past — opens a small transaction, re-locks the row,
+re-checks the status (so a race against a manual close or another concurrent
+caller can't double-transition), and runs the ordinary `FORMING → ACCEPTED`
+transition with `actorUserId: null` (nobody clicked anything) and
+`reason: 'wait_time_elapsed'`, clearing `wait_until` in the same transaction.
+The caller then re-reads the row before proceeding. This means **the very next
+read or action against an expired pool is what closes it** — `GET
+/pools/active`, `GET /pools/nearby`, `POST /pools/:id/rides`,
+`POST /pools/:id/close`, `POST /pools/:id/arrive` — not a fixed poll interval
+and not a background job. In practice the driver console's own 4-second poll
+means this is invisible: the status badge and countdown simply flip from
+"Forming" to "Ready to go" on their own between one poll and the next.
+
+Commit: `fix(pool): auto-close a pool the moment its wait time elapses`
+
 ---
 
 ## 9. Block F — Ride lifecycle (steps F1–F4)

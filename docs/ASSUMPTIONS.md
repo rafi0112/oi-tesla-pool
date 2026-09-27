@@ -142,3 +142,27 @@ Each is implemented consistently throughout the codebase and seed data.
     reports `joinAttempt: { ok: false, reason, message }` and the ride is left
     `REQUESTED`, exactly as if no pool had been chosen. A passenger's booking
     should never be undone by someone else's timing.
+
+14. **A pool closes itself the moment its wait time elapses — the next read or
+    action against it does the closing, not a background job.**
+    There is no scheduler in this project by design (no queue, no cron — see the
+    non-negotiable rules), so `FORMING → ACCEPTED` on expiry can't run on a timer
+    in the background. Instead, every function that fetches a pool by id
+    (`GET /pools/active`, `GET /pools/nearby`, joining, closing, arriving, …)
+    calls `autoCloseIfExpired` first: if the pool is still `FORMING` and its
+    `wait_until` has passed, it transitions to `ACCEPTED` right there, with
+    `actorUserId: null` (nobody clicked anything) and `reason: 'wait_time_elapsed'`
+    in the audit trail, before the caller proceeds.
+
+    This is a real correctness fix, not just tidiness: without it, a `POST
+    /pools/:id/arrive` against an expired-but-still-`FORMING` row would fail
+    `assertTransition('pool', 'FORMING', 'DRIVER_ARRIVED')` with
+    `INVALID_TRANSITION`, even though the window had plainly closed — a driver
+    who arrived after the wait time ran out, without ever separately loading the
+    pool screen, would have hit that error for no reason a passenger or driver
+    could see. Making every read self-heal the stale status closes that gap
+    without adding a dependency this project explicitly rules out.
+
+    In the driver console this is invisible in the pleasant way: the status
+    badge and countdown just flip from "Forming" to "Ready to go" between one
+    4-second poll and the next, with no button ever clicked.

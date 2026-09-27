@@ -13,7 +13,8 @@ Each is implemented consistently throughout the codebase and seed data.
 
 2. **Same pickup zone is mandatory; driver must also be in that zone.**
    The brief uses named areas without street addresses. Matching on zone is the
-   simplest consistent rule. The driver sets their `current_zone_id` when going online;
+   simplest consistent rule. The driver sets their `current_zone_id` when going online
+   (assumption 15 covers how a passenger's own `current_zone_id` is set, separately);
    the request feed only shows rides in that zone; `canJoin` condition 3 enforces
    zone equality at the pool level. All three guards together ensure driver and all
    passengers are always in the same pickup zone.
@@ -166,3 +167,24 @@ Each is implemented consistently throughout the codebase and seed data.
     In the driver console this is invisible in the pleasant way: the status
     badge and countdown just flip from "Forming" to "Ready to go" between one
     4-second poll and the next, with no button ever clicked.
+
+15. **A passenger's `current_zone_id` means something different from a driver's, even
+    though it's the same column.**
+    Only a driver's `current_zone_id` gates anything (assumption 2, condition 3) — it
+    is null exactly when they're offline, and the request feed treats it as "which
+    zone am I serving right now". A passenger has no online/offline concept, so their
+    `current_zone_id` is purely a remembered default: every `POST /rides` sets it to
+    that booking's `pickupZoneId` in the same transaction, and `PATCH /passengers/me
+    { zoneId }` lets them set it directly without booking. Nothing in the matching
+    rule, the driver's feed, or any authorization check ever reads a passenger's
+    `current_zone_id` — the sole consumer is the booking form defaulting its own
+    "From" field to wherever that passenger last requested from, so returning
+    passengers don't re-pick their own neighbourhood every time.
+
+    Reusing one column for two unrelated meanings was a deliberate trade-off: adding
+    a second column (`last_pickup_zone_id`, say) would have been more explicit, but
+    `current_zone_id` already means "the zone this user is currently associated
+    with" in the schema's own terms, and a passenger's last pickup is exactly that,
+    just read by a different service layer for a different purpose. The two
+    interpretations can't collide because a passenger's row is never read through
+    `driver.service.ts` and a driver's is never read through `passenger.service.ts`.

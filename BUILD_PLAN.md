@@ -930,6 +930,40 @@ means this is invisible: the status badge and countdown simply flip from
 
 Commit: `fix(pool): auto-close a pool the moment its wait time elapses`
 
+**E8 — Passenger location, persisted and driver-visible by zone**
+
+Every passenger already picks a pickup zone per booking (E1), and every driver
+already scopes their request feed to their own `current_zone_id` (G2). What was
+missing: a passenger's choice never *persisted* anywhere, so the booking form
+always defaulted to Banani regardless of where that passenger actually books
+from trip after trip, and there was no way to update it except by booking.
+
+`users.current_zone_id` — until now driver-only — is reused for passengers too,
+with a different meaning read by a different service layer (see
+`docs/ASSUMPTIONS.md` #15 for why one column, not two, is safe here):
+
+- `POST /rides` sets `current_zone_id = pickupZoneId` in the same transaction
+  as ride creation. Requesting a ride *is* declaring "I'm here now" — no
+  separate action needed for the common case.
+- `GET /passengers/me` / `PATCH /passengers/me { zoneId }` (passenger only)
+  mirror the driver's own profile endpoints, for a passenger who wants to set
+  their location without booking.
+- The booking form defaults its "From" field to `currentZone` once the
+  profile loads, labelled "· your last location"; picking a different zone
+  manually always overrides it, and the label disappears when it no longer
+  matches.
+
+Nothing new needed on the driver side — `GET /drivers/requests` already
+filtered by `pickup_zone_id = driver.current_zone_id` (G2) and `canJoin`
+condition 3 already enforced zone equality (§3.2); a driver selecting a
+different zone already saw only that zone's requests. Verified directly:
+Nusrat booking from Gulshan 1 and Rafiq from Banani, a driver who selects
+Gulshan 1 sees only Nusrat, and the same driver selecting Banani sees only
+Rafiq — and can run the full lifecycle (accept → arrive → start → drop off →
+complete) on either.
+
+Commit: `feat(passenger): persist and expose a passenger's current location`
+
 ---
 
 ## 9. Block F — Ride lifecycle (steps F1–F4)

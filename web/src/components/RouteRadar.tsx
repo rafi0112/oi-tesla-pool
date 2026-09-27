@@ -48,24 +48,7 @@ export function RouteRadar({
   const uid = useId().replace(/:/g, '')
   const origin = zones.find(z => z.id === originId)
 
-  const layout = useMemo(() => {
-    if (!origin) return null
-
-    const placed = zones.map(z => {
-      const km = z.id === origin.id ? 0 : haversineKm(origin, z)
-      const bearing = z.id === origin.id ? 0 : bearingDeg(origin, z)
-      return { zone: z, km, bearing }
-    })
-
-    const maxKm = Math.max(3, ...placed.map(p => p.km)) * 1.1
-    // Square-root radius: directions stay exact, while nearby zones get room to breathe.
-    const radius = (km: number) => R * Math.sqrt(km / maxKm)
-
-    const byId = new Map(placed.map(p => [p.zone.id, { ...p, r: radius(p.km) }]))
-    const rings = RING_KM.filter(k => k < maxKm * 0.92)
-
-    return { byId, radius, rings }
-  }, [zones, origin])
+  const layout = useMemo(() => (origin ? computeLayout(zones, origin) : null), [zones, origin])
 
   if (!origin || !layout) {
     return (
@@ -75,16 +58,11 @@ export function RouteRadar({
     )
   }
 
-  const { byId, radius, rings } = layout
+  const { byId, radius, rings, labels, originLabel } = layout
   const memberBearings = members
     .map(m => byId.get(m.destinationId)?.bearing)
     .filter((b): b is number => b !== undefined)
   const arc = showOpenArc ? acceptableArc(memberBearings) : null
-
-  const labels = placeLabels(
-    [...byId.values()].filter(p => p.zone.id !== originId),
-    { x: C, y: C + 29, text: origin.name },
-  )
 
   const occupied = new Set([
     ...members.map(m => m.destinationId),
@@ -142,15 +120,16 @@ export function RouteRadar({
         )}
 
         {/* range rings */}
-        {rings.map(km => {
+        {rings.map(({ km, label }) => {
           const r = radius(km)
-          const label = polar(22, r, C, C)
           return (
             <g key={km}>
               <circle cx={C} cy={C} r={r} fill="none" stroke="var(--line-2)" strokeOpacity="0.55" strokeDasharray="2 5" />
-              <text x={label.x + 3} y={label.y - 3} className="fill-ink-3 font-mono" fontSize="8.5">
-                {km} km
-              </text>
+              {label && (
+                <text x={label.x} y={label.y} className="fill-ink-3 font-mono" fontSize="8.5">
+                  {km} km
+                </text>
+              )}
             </g>
           )
         })}
@@ -327,7 +306,7 @@ export function RouteRadar({
           <circle cx={C} cy={C} r="11" fill="var(--ink)" stroke="var(--signal)" strokeWidth="2.5" />
           <circle cx={C} cy={C} r="3.5" fill="var(--marigold)" />
           <text
-            x={C} y={C + 29} textAnchor="middle" fontSize="11.5" fontWeight="800"
+            x={originLabel.x} y={originLabel.y} textAnchor={originLabel.anchor} fontSize="11.5" fontWeight="800"
             className="fill-ink font-display"
             style={{ paintOrder: 'stroke', stroke: 'var(--paper)', strokeWidth: 4, strokeLinejoin: 'round' }}
           >
@@ -342,53 +321,163 @@ export function RouteRadar({
 type Anchor = 'start' | 'middle' | 'end'
 interface LabelSpot { x: number; y: number; anchor: Anchor; w: number }
 
-const CHAR_W = 6.4
+// Measured: Bricolage at 11px runs up to ~6.7px a character, and the paper-coloured
+// halo stroke adds ~2px round every glyph. The box errs slightly large on purpose.
+const CHAR_W = 7
+const HALO = 2
 const box = (l: LabelSpot) => {
   const left = l.anchor === 'start' ? l.x : l.anchor === 'end' ? l.x - l.w : l.x - l.w / 2
-  return { left, right: left + l.w, top: l.y - 10, bottom: l.y + 3 }
+  return { left: left - HALO, right: left + l.w + HALO, top: l.y - 10.5, bottom: l.y + 3.5 }
 }
 const hits = (a: ReturnType<typeof box>, b: ReturnType<typeof box>) =>
   a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
 
-/**
- * Labels start just beyond their dot, along the bearing. Zones that sit on
- * nearly the same bearing (Dhanmondi and Farmgate, seen from Banani) would
- * collide, so overlapping labels are pushed apart vertically. Dots never move —
- * only the text does, so the geometry stays honest.
- */
-function placeLabels(
-  zones: { zone: Zone; bearing: number; r: number }[],
-  fixed: { x: number; y: number; text: string },
-): Map<number, LabelSpot> {
-  const spots = zones.map(({ zone, bearing, r }) => {
-    const at = polar(bearing, r + 15, C, C)
-    const anchor: Anchor = Math.abs(at.x - C) < 18 ? 'middle' : at.x > C ? 'start' : 'end'
-    return { id: zone.id, spot: { x: at.x, y: at.y + 3.5, anchor, w: zone.name.length * CHAR_W } }
-  })
-  const pinned: LabelSpot = { x: fixed.x, y: fixed.y, anchor: 'middle', w: fixed.text.length * CHAR_W * 1.05 }
+function coversDot(b: ReturnType<typeof box>, dot: { x: number; y: number; r: number }) {
+  const nx = Math.max(b.left, Math.min(dot.x, b.right))
+  const ny = Math.max(b.top, Math.min(dot.y, b.bottom))
+  return (nx - dot.x) ** 2 + (ny - dot.y) ** 2 < dot.r ** 2
+}
 
-  for (let pass = 0; pass < 40; pass++) {
-    let moved = false
-    for (let i = 0; i < spots.length; i++) {
-      const a = spots[i].spot
-      if (hits(box(a), box(pinned))) {
-        a.y += a.y >= pinned.y ? 2 : -2
-        moved = true
-      }
-      for (let j = i + 1; j < spots.length; j++) {
-        const b = spots[j].spot
-        const ba = box(a)
-        const bb = box(b)
-        if (!hits(ba, bb)) continue
-        const push = (Math.min(ba.bottom - bb.top, bb.bottom - ba.top) + 1) / 2
-        if (a.y <= b.y) { a.y -= push; b.y += push } else { a.y += push; b.y -= push }
-        moved = true
-      }
-    }
-    if (!moved) break
+type Box = ReturnType<typeof box>
+interface Dot { id: number; x: number; y: number; r: number }
+interface PlacedZone { zone: Zone; km: number; bearing: number; r: number }
+
+const CENTRE_ID = -1
+
+/** Pick the cheapest candidate: the first clear one, or else the least-bad. */
+function choose<T>(candidates: T[], cost: (c: T) => number): { pick: T; cost: number } {
+  let pick = candidates[0]
+  let best = Infinity
+  for (const c of candidates) {
+    const k = cost(c)
+    if (k < best) { pick = c; best = k }
+    if (k === 0) break
+  }
+  return { pick, cost: best }
+}
+
+/**
+ * Lays out every label for one distance curve and scores the clutter. Dots never
+ * move — only text does, so the geometry stays honest. Each label takes the first
+ * of a few candidate spots that is clear of every dot and every label already
+ * placed; the pickup's own label goes first, then zones nearest the crowded
+ * centre, then the ring distances.
+ */
+function placeAll(others: PlacedZone[], originName: string, rings: { km: number; r: number }[]) {
+  const dots: Dot[] = others.map(p => ({ id: p.zone.id, ...polar(p.bearing, p.r, C, C), r: 7.5 }))
+  dots.push({ id: CENTRE_ID, x: C, y: C, r: 15 })
+
+  const placed: Box[] = []
+  let clutter = 0
+  const penalty = (b: Box, ownId: number) => {
+    let k = 0
+    for (const d of dots) if (d.id !== ownId && coversDot(b, d)) k += 10
+    for (const p of placed) if (hits(b, p)) k += 5
+    return k
   }
 
-  return new Map(spots.map(s => [s.id, s.spot]))
+  // The pickup's name sits beside Bullet — below by preference.
+  const ow = originName.length * CHAR_W * 1.1
+  const origin = choose<LabelSpot>(
+    [
+      { x: C, y: C + 29, anchor: 'middle', w: ow },
+      { x: C, y: C - 19, anchor: 'middle', w: ow },
+      { x: C + 19, y: C + 4, anchor: 'start', w: ow },
+      { x: C - 19, y: C + 4, anchor: 'end', w: ow },
+    ],
+    s => penalty(box(s), CENTRE_ID),
+  )
+  placed.push(box(origin.pick))
+  clutter += origin.cost
+
+  const labels = new Map<number, LabelSpot>()
+  for (const p of [...others].sort((a, b) => a.r - b.r)) {
+    const w = p.zone.name.length * CHAR_W
+    const dot = polar(p.bearing, p.r, C, C)
+    const out = (dist: number): LabelSpot => {
+      const at = polar(p.bearing, p.r + dist, C, C)
+      const anchor: Anchor = Math.abs(at.x - C) < 18 ? 'middle' : at.x > C ? 'start' : 'end'
+      return { x: at.x, y: at.y + 3.5, anchor, w }
+    }
+    const beyond = out(15)
+    const chosen = choose<LabelSpot>(
+      [
+        beyond,
+        { x: dot.x + 10, y: dot.y + 4, anchor: 'start', w },
+        { x: dot.x - 10, y: dot.y + 4, anchor: 'end', w },
+        { x: dot.x, y: dot.y - 11, anchor: 'middle', w },
+        { x: dot.x, y: dot.y + 19, anchor: 'middle', w },
+        { ...beyond, y: beyond.y - 14 },
+        { ...beyond, y: beyond.y + 14 },
+        { x: dot.x + 10, y: dot.y - 9, anchor: 'start', w },
+        { x: dot.x - 10, y: dot.y - 9, anchor: 'end', w },
+        { x: dot.x + 10, y: dot.y + 17, anchor: 'start', w },
+        { x: dot.x - 10, y: dot.y + 17, anchor: 'end', w },
+        out(27),
+      ],
+      s => penalty(box(s), p.zone.id),
+    )
+    labels.set(p.zone.id, chosen.pick)
+    placed.push(box(chosen.pick))
+    clutter += chosen.cost
+  }
+
+  // Ring distances are a nicety: a ring with no clear spot goes unlabelled.
+  const ringLabels = rings.map(({ km, r }) => {
+    const text = `${km} km`
+    for (const bearing of [22, 338, 158, 202, 68, 292, 112, 248]) {
+      const p = polar(bearing, r, C, C)
+      const at = { x: p.x + 3, y: p.y - 3 }
+      const b = { left: at.x - 1, right: at.x + text.length * 5.4 + 1, top: at.y - 8, bottom: at.y + 2 }
+      if (penalty(b, CENTRE_ID - 1) === 0) {
+        placed.push(b)
+        return { km, label: at }
+      }
+    }
+    clutter += 1
+    return { km, label: null as { x: number; y: number } | null }
+  })
+
+  return { labels, originLabel: origin.pick, ringLabels, clutter }
+}
+
+/**
+ * Bearings are always exact; only the distance curve adapts. From Banani the
+ * neighbours crowd the centre and a square-root curve spreads them; from Uttara
+ * the whole city lies far to the south and a flatter curve spreads that cluster
+ * instead. Each curve is laid out in full and the least cluttered one wins.
+ */
+function computeLayout(zones: Zone[], origin: Zone) {
+  const measured = zones.map(z => ({
+    zone: z,
+    km: z.id === origin.id ? 0 : haversineKm(origin, z),
+    bearing: z.id === origin.id ? 0 : bearingDeg(origin, z),
+  }))
+  const maxKm = Math.max(3, ...measured.map(m => m.km)) * 1.1
+  const ringKm = RING_KM.filter(k => k < maxKm * 0.92)
+
+  let best: ReturnType<typeof tryCurve> | null = null
+  function tryCurve(exponent: number) {
+    const radius = (km: number) => R * (km / maxKm) ** exponent
+    const withR: PlacedZone[] = measured.map(m => ({ ...m, r: radius(m.km) }))
+    const others = withR.filter(p => p.zone.id !== origin.id)
+    const placed = placeAll(others, origin.name, ringKm.map(km => ({ km, r: radius(km) })))
+    return {
+      radius,
+      byId: new Map(withR.map(p => [p.zone.id, p])),
+      rings: placed.ringLabels,
+      labels: placed.labels,
+      originLabel: placed.originLabel,
+      clutter: placed.clutter,
+    }
+  }
+
+  for (const exponent of [0.5, 0.7, 1]) {
+    const attempt = tryCurve(exponent)
+    if (!best || attempt.clutter < best.clutter) best = attempt
+    if (best.clutter === 0) break
+  }
+  return best!
 }
 
 function describe(

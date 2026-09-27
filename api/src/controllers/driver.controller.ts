@@ -1,9 +1,20 @@
 import { Request, Response, NextFunction } from 'express'
 import { z } from 'zod'
-import { setAvailability, availabilitySchema, getRequestFeed } from '../services/driver.service'
+import {
+  setAvailability, availabilitySchema, getRequestFeed, getProfile,
+} from '../services/driver.service'
 import { AuthedRequest } from './auth.controller'
 
 export { availabilitySchema }
+
+export async function getProfileHandler(req: Request, res: Response, next: NextFunction) {
+  try {
+    const driver = await getProfile((req as AuthedRequest).user.id)
+    res.json({ driver })
+  } catch (err) {
+    next(err)
+  }
+}
 
 export async function requestFeedHandler(req: Request, res: Response, next: NextFunction) {
   try {

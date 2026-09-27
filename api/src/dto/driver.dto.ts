@@ -1,4 +1,4 @@
-import { PoolRow, PoolMemberRow } from '../repositories/pool.repo'
+import { PoolRow, PoolMemberRow, VehicleRow } from '../repositories/pool.repo'
 import { UserRow } from '../repositories/user.repo'
 import { ZoneRow } from '../repositories/zone.repo'
 import { OpenRequestRow } from '../repositories/ride.repo'
@@ -8,14 +8,20 @@ export interface DriverProfileDTO {
   name: string
   isOnline: boolean
   currentZone: { id: number; name: string } | null
+  vehicle: { name: string; seatCapacity: number } | null
 }
 
-export function toDriverProfileDTO(u: UserRow, zone: ZoneRow | null): DriverProfileDTO {
+export function toDriverProfileDTO(
+  u: UserRow,
+  zone: ZoneRow | null,
+  vehicle: VehicleRow | null,
+): DriverProfileDTO {
   return {
     id:          u.id,
     name:        u.name,
     isOnline:    u.is_online,
     currentZone: zone ? { id: zone.id, name: zone.name } : null,
+    vehicle:     vehicle ? { name: vehicle.name, seatCapacity: vehicle.seat_capacity } : null,
   }
 }
 

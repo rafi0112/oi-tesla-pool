@@ -343,9 +343,35 @@ describe('the driver request feed', () => {
 })
 
 describe('zones', () => {
-  it('is public and exposes no coordinates', async () => {
+  it('is public and carries numeric coordinates for the direction radar', async () => {
     const res = expectStatus(await api().get('/zones'), 200)
     expect(res.body.zones).toHaveLength(8)
-    expect(Object.keys(res.body.zones[0]).sort()).toEqual(['id', 'name'])
+    expect(Object.keys(res.body.zones[0]).sort()).toEqual(['id', 'lat', 'lng', 'name'])
+    const banani = res.body.zones.find((z: { name: string }) => z.name === 'Banani')
+    expect(banani.lat).toBe(23.7937)
+    expect(typeof banani.lng).toBe('number')
+  })
+})
+
+describe('driver profile', () => {
+  it('reports availability, zone and vehicle', async () => {
+    const jashim = await tokenFor('Jashim Uddin')
+
+    const offline = expectStatus(
+      await api().get('/drivers/me').set('Authorization', `Bearer ${jashim}`), 200,
+    )
+    expect(offline.body.driver).toMatchObject({
+      name: 'Jashim Uddin',
+      isOnline: false,
+      currentZone: null,
+      vehicle: { name: 'Bullet', seatCapacity: 3 },
+    })
+
+    await goOnline(jashim, banani)
+    const online = expectStatus(
+      await api().get('/drivers/me').set('Authorization', `Bearer ${jashim}`), 200,
+    )
+    expect(online.body.driver.isOnline).toBe(true)
+    expect(online.body.driver.currentZone).toEqual({ id: banani, name: 'Banani' })
   })
 })

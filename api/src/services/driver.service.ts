@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { updateDriverAvailability, findUserById } from '../repositories/user.repo'
 import { findZoneById } from '../repositories/zone.repo'
 import { findOpenRequestsInZone } from '../repositories/ride.repo'
-import { findActivePoolByDriver } from '../repositories/pool.repo'
+import { findActivePoolByDriver, findVehicleByDriver } from '../repositories/pool.repo'
 import { loadJoinContext, joinRejectionMessage } from './pool.service'
 import { canJoin } from '../domain/matching'
 import {
@@ -29,16 +29,29 @@ export async function setAvailability(
   driverId: string,
   data: z.infer<typeof availabilitySchema>,
 ): Promise<DriverProfileDTO> {
+  const vehicle = await findVehicleByDriver(driverId)
+
   if (!data.isOnline) {
     const user = await updateDriverAvailability(driverId, false, null)
-    return toDriverProfileDTO(user, null)
+    return toDriverProfileDTO(user, null, vehicle)
   }
 
   const zone = await findZoneById(data.zoneId!)
   if (!zone) throw new NotFoundError('Zone not found')
 
   const user = await updateDriverAvailability(driverId, true, zone.id)
-  return toDriverProfileDTO(user, zone)
+  return toDriverProfileDTO(user, zone, vehicle)
+}
+
+export async function getProfile(driverId: string): Promise<DriverProfileDTO> {
+  const user = await findUserById(driverId)
+  if (!user) throw new NotFoundError('Driver not found')
+
+  const [zone, vehicle] = await Promise.all([
+    user.current_zone_id === null ? null : findZoneById(user.current_zone_id),
+    findVehicleByDriver(driverId),
+  ])
+  return toDriverProfileDTO(user, zone, vehicle)
 }
 
 /**

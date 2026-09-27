@@ -1,7 +1,10 @@
 import { z } from 'zod'
 import { withTransaction } from '../db/pool'
 import { findUserById } from '../repositories/user.repo'
-import { findRideById, setRidePool, lockRideById } from '../repositories/ride.repo'
+import {
+  findRideById, setRidePool, lockRideById,
+  lockMatchedMembers, setFinalFare,
+} from '../repositories/ride.repo'
 import {
   findVehicleByDriver,
   findPoolById,
@@ -9,12 +12,14 @@ import {
   findPoolMembers,
   createPool as insertPool,
   claimSeats,
+  lockPoolById,
   PoolRow,
   PoolMemberRow,
 } from '../repositories/pool.repo'
 import { getZoneMap, getDistanceMatrix } from '../repositories/zone.repo'
 import { insertPoolEvent } from '../repositories/event.repo'
-import { transitionRide } from './transition'
+import { transitionRide, transitionPool } from './transition'
+import { fareFor } from '../domain/fare'
 import { toDriverPoolDTO, DriverPoolDTO } from '../dto/driver.dto'
 import { canJoin, PoolSnapshot } from '../domain/matching'
 import { assertTransition } from '../domain/stateMachine'
@@ -152,6 +157,9 @@ export async function joinPool(
   }
 
   await withTransaction(async tx => {
+    // Pool before ride, matching every other path that locks both.
+    await lockPoolById(tx, poolId)
+
     // Re-read under a row lock: the advisory checks above used an unlocked
     // snapshot, so this is the authoritative view of the ride.
     const locked = await lockRideById(tx, data.rideRequestId)
@@ -182,6 +190,35 @@ function joinRejectionMessage(reason: string | undefined): string {
     case 'detour_too_long':       return 'Adding that passenger would detour the trip too far'
     default:                      return 'That passenger cannot join this pool'
   }
+}
+
+/**
+ * Boards everyone and starts the trip. The membership at this instant fixes
+ * every fare permanently — final_fare_paisa is written once here and the read
+ * path stops recomputing from that point on.
+ */
+export async function startTrip(driverId: string, poolId: string): Promise<DriverPoolDTO> {
+  const owned = await findPoolByIdForDriver(poolId, driverId)
+  if (!owned) throw new NotFoundError('Pool not found')
+
+  await withTransaction(async tx => {
+    const pool = await lockPoolById(tx, poolId)
+    if (!pool) throw new NotFoundError('Pool not found')
+
+    const boarding = await lockMatchedMembers(tx, poolId)
+
+    await transitionPool(tx, pool, 'EN_ROUTE', driverId)
+
+    for (const member of boarding) {
+      await transitionRide(tx, member, 'PICKED_UP', driverId)
+      const fare = member.distance_km === null
+        ? member.quoted_fare_paisa
+        : fareFor(member.distance_km, boarding.length)
+      await setFinalFare(tx, member.id, fare)
+    }
+  })
+
+  return loadPoolDTO(poolId)
 }
 
 export async function loadPoolDTO(poolId: string): Promise<DriverPoolDTO> {

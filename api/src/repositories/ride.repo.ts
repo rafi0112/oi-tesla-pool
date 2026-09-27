@@ -145,6 +145,52 @@ export async function setRidePool(
   await tx.query(`UPDATE ride_requests SET pool_id = $2 WHERE id = $1`, [rideId, poolId])
 }
 
+export interface BoardingMemberRow {
+  id: string
+  status: string
+  seats: number
+  quoted_fare_paisa: number
+  distance_km: number | null
+}
+
+/**
+ * Locks every MATCHED booking in the pool, ready to board. `FOR UPDATE OF r`
+ * is required: Postgres refuses a plain FOR UPDATE across the nullable side of
+ * an outer join.
+ */
+export async function lockMatchedMembers(
+  tx: PoolClient,
+  poolId: string,
+): Promise<BoardingMemberRow[]> {
+  const { rows } = await tx.query<Omit<BoardingMemberRow, 'distance_km'> & { distance_km: string | null }>(
+    `SELECT r.id, r.status, r.seats, r.quoted_fare_paisa, zd.distance_km
+     FROM   ride_requests r
+     LEFT JOIN zone_distances zd
+            ON zd.from_zone_id = r.pickup_zone_id
+           AND zd.to_zone_id   = r.destination_zone_id
+     WHERE  r.pool_id = $1
+       AND  r.status  = 'MATCHED'
+     ORDER  BY r.id
+     FOR UPDATE OF r`,
+    [poolId],
+  )
+  return rows.map(r => ({
+    ...r,
+    distance_km: r.distance_km === null ? null : Number(r.distance_km),
+  }))
+}
+
+export async function setFinalFare(
+  tx: PoolClient,
+  rideId: string,
+  finalFarePaisa: number,
+): Promise<void> {
+  await tx.query(
+    `UPDATE ride_requests SET final_fare_paisa = $2 WHERE id = $1`,
+    [rideId, finalFarePaisa],
+  )
+}
+
 /** Every booking ever attached to the pool, whatever its status. */
 export async function countAllBookingsInPool(tx: PoolClient, poolId: string): Promise<number> {
   const { rows } = await tx.query<{ count: string }>(

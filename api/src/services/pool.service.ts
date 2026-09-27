@@ -10,6 +10,7 @@ import {
   findPoolById,
   findPoolByIdForDriver,
   findActivePoolByDriver,
+  findFormingPoolsByOriginZone,
   findPoolMembers,
   createPool as insertPool,
   claimSeats,
@@ -22,6 +23,7 @@ import { insertPoolEvent } from '../repositories/event.repo'
 import { transitionRide, transitionPool } from './transition'
 import { fareFor } from '../domain/fare'
 import { toDriverPoolDTO, DriverPoolDTO } from '../dto/driver.dto'
+import { toPoolOptionDTO, PoolOptionDTO } from '../dto/poolOption.dto'
 import { canJoin, PoolSnapshot, Zone, DistanceMatrix } from '../domain/matching'
 import { assertTransition } from '../domain/stateMachine'
 import { ConflictError, NotFoundError, ValidationError } from '../errors'
@@ -142,6 +144,35 @@ export async function createPool(
   return loadPoolDTO(poolId)
 }
 
+/**
+ * The atomic core shared by every path that joins a ride to a pool: lock pool
+ * before ride (matching every other path that locks both, so nothing can
+ * deadlock against it), assert the transition, claim the seat, attach and
+ * transition the ride. Throws NotFoundError / ConflictError on failure — callers
+ * decide whether that means the whole request fails (driver's explicit accept)
+ * or is caught and reported as a soft failure (a passenger's best-effort self-join).
+ */
+async function runAtomicJoin(actorId: string, poolId: string, rideId: string): Promise<void> {
+  await withTransaction(async tx => {
+    await lockPoolById(tx, poolId)
+
+    // Re-read under a row lock: any advisory check above used an unlocked
+    // snapshot, so this is the authoritative view of the ride.
+    const locked = await lockRideById(tx, rideId)
+    if (!locked) throw new NotFoundError('Ride request not found')
+
+    // Assert before claiming, so a re-submitted accept reports the real reason
+    // instead of POOL_FULL when the pool happens to be full.
+    assertTransition('ride', locked.status, 'MATCHED')
+
+    const claimed = await claimSeats(tx, poolId, locked.seats)
+    if (!claimed) throw new ConflictError('POOL_FULL', 'That seat was just taken')
+
+    await setRidePool(tx, locked.id, poolId)
+    await transitionRide(tx, locked, 'MATCHED', actorId)
+  })
+}
+
 export async function joinPool(
   driverId: string,
   poolId: string,
@@ -156,7 +187,7 @@ export async function joinPool(
   const ctx = await loadJoinContext(pool)
 
   // Advisory check — gives the driver a precise reason. The seat guarantee is
-  // the atomic UPDATE below, not this snapshot.
+  // the atomic UPDATE inside runAtomicJoin, not this snapshot.
   const verdict = canJoin(
     ctx.snapshot,
     {
@@ -176,27 +207,91 @@ export async function joinPool(
     })
   }
 
-  await withTransaction(async tx => {
-    // Pool before ride, matching every other path that locks both.
-    await lockPoolById(tx, poolId)
-
-    // Re-read under a row lock: the advisory checks above used an unlocked
-    // snapshot, so this is the authoritative view of the ride.
-    const locked = await lockRideById(tx, data.rideRequestId)
-    if (!locked) throw new NotFoundError('Ride request not found')
-
-    // Assert before claiming, so a re-submitted accept reports the real reason
-    // instead of POOL_FULL when the pool happens to be full.
-    assertTransition('ride', locked.status, 'MATCHED')
-
-    const claimed = await claimSeats(tx, poolId, locked.seats)
-    if (!claimed) throw new ConflictError('POOL_FULL', 'That seat was just taken')
-
-    await setRidePool(tx, locked.id, poolId)
-    await transitionRide(tx, locked, 'MATCHED', driverId)
-  })
-
+  await runAtomicJoin(driverId, poolId, data.rideRequestId)
   return loadPoolDTO(poolId)
+}
+
+export interface JoinAttempt {
+  ok: boolean
+  reason?: string
+  message?: string
+}
+
+/**
+ * Best-effort self-join, run right after a passenger books with a chosen pool.
+ * Unlike joinPool, a refusal here never throws: the booking above has already
+ * succeeded and must stand on its own, so an expired window or a lost race
+ * just means the new ride stays REQUESTED, exactly as if no pool had been
+ * chosen. The passenger sees why in the response and can wait for a driver.
+ */
+export async function attemptSelfJoin(
+  passengerId: string,
+  poolId: string,
+  rideId: string,
+): Promise<JoinAttempt> {
+  const pool = await findPoolById(poolId)
+  if (!pool) return { ok: false, reason: 'pool_not_found', message: 'That pool is no longer available' }
+
+  const ride = await findRideById(rideId, passengerId)
+  if (!ride) return { ok: false, reason: 'not_found', message: 'Ride not found' }
+
+  const ctx = await loadJoinContext(pool)
+  const verdict = canJoin(
+    ctx.snapshot,
+    {
+      seats:             ride.seats,
+      pickupZoneId:      ride.pickup_zone_id,
+      destinationZoneId: ride.destination_zone_id,
+    },
+    ctx.zones,
+    ctx.distances,
+  )
+  if (!verdict.ok) {
+    return { ok: false, reason: verdict.reason, message: joinRejectionMessage(verdict.reason) }
+  }
+
+  try {
+    await runAtomicJoin(passengerId, poolId, rideId)
+    return { ok: true }
+  } catch (err) {
+    if (err instanceof ConflictError) {
+      return { ok: false, reason: 'race_lost', message: err.message }
+    }
+    throw err
+  }
+}
+
+/**
+ * FORMING pools a passenger could join right now, given where they are
+ * boarding, where they are headed, and how many seats they need. Every pool in
+ * the zone is returned, joinable or not, with the same rejection reason the
+ * join itself would give — so a passenger whose destination doesn't fit any
+ * open pool sees why, rather than an empty list they can't distinguish from
+ * "nobody is pooling yet".
+ */
+export async function findNearbyPools(
+  pickupZoneId: number,
+  destinationZoneId: number,
+  seats: number,
+): Promise<PoolOptionDTO[]> {
+  const pools = await findFormingPoolsByOriginZone(pickupZoneId)
+  if (pools.length === 0) return []
+
+  const [zones, distances] = await Promise.all([getZoneMap(), getDistanceMatrix()])
+
+  const options = await Promise.all(pools.map(async pool => {
+    const members = await findPoolMembers(pool.id)
+    const verdict = canJoin(
+      toSnapshot(pool, members),
+      { seats, pickupZoneId, destinationZoneId },
+      zones,
+      distances,
+    )
+    return toPoolOptionDTO(pool, verdict, verdict.ok ? undefined : joinRejectionMessage(verdict.reason))
+  }))
+
+  // Joinable options first, then by seats available, so the best fit leads.
+  return options.sort((a, b) => Number(b.joinable) - Number(a.joinable) || b.seatsAvailable - a.seatsAvailable)
 }
 
 export function joinRejectionMessage(reason: string | undefined): string {

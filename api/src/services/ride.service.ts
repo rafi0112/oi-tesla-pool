@@ -13,6 +13,7 @@ import {
   countAllBookingsInPool,
 } from '../repositories/ride.repo'
 import { lockPoolById, releaseSeats } from '../repositories/pool.repo'
+import { attemptSelfJoin, JoinAttempt } from './pool.service'
 import { transitionRide, transitionPool } from './transition'
 import { findRideEvents } from '../repositories/event.repo'
 import {
@@ -25,17 +26,25 @@ export const createRideSchema = z.object({
   pickupZoneId:      z.number().int().positive(),
   destinationZoneId: z.number().int().positive(),
   seats:             z.number().int().min(1).max(POOL_POLICY.maxSeatsPerBooking),
+  // Set when the passenger chose "Join this pool" from GET /pools/nearby
+  // instead of booking independently.
+  poolId:            z.string().uuid().optional(),
 })
+
+export interface RequestRideResult {
+  ride: PassengerRideDTO
+  joinAttempt?: JoinAttempt
+}
 
 export async function requestRide(
   passengerId: string,
   data: z.infer<typeof createRideSchema>,
   idempotencyKey: string | null,
-): Promise<PassengerRideDTO> {
+): Promise<RequestRideResult> {
   // Idempotency — return existing ride if key already used
   if (idempotencyKey) {
     const existing = await findRideByIdempotencyKey(idempotencyKey)
-    if (existing) return toPassengerRideDTO(existing)
+    if (existing) return { ride: toPassengerRideDTO(existing) }
   }
 
   if (data.pickupZoneId === data.destinationZoneId) {
@@ -48,8 +57,9 @@ export async function requestRide(
   // Booked alone so far, so the solo rate. Seats do not change the fare.
   const quotedFarePaisa = soloFare(distanceKm)
 
+  let ride
   try {
-    const ride = await withTransaction(tx =>
+    ride = await withTransaction(tx =>
       createRide(tx, {
         passengerId,
         pickupZoneId:      data.pickupZoneId,
@@ -59,7 +69,6 @@ export async function requestRide(
         idempotencyKey,
       }),
     )
-    return toPassengerRideDTO(ride)
   } catch (err: unknown) {
     // unique violation on one_active_ride_per_passenger index
     if ((err as { code?: string }).code === '23505') {
@@ -67,6 +76,15 @@ export async function requestRide(
     }
     throw err
   }
+
+  if (!data.poolId) return { ride: toPassengerRideDTO(ride) }
+
+  // The booking above has already succeeded. A refused or lost-race join must
+  // not fail the whole request — it only means this ride stays REQUESTED,
+  // same as if the passenger had never picked a pool.
+  const joinAttempt = await attemptSelfJoin(passengerId, data.poolId, ride.id)
+  const finalRide = joinAttempt.ok ? await findRideById(ride.id, passengerId) : ride
+  return { ride: toPassengerRideDTO(finalRide!), joinAttempt }
 }
 
 export async function getMyRides(passengerId: string): Promise<PassengerRideDTO[]> {

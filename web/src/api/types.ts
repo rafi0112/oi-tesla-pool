@@ -93,3 +93,22 @@ export interface DriverRequest {
   joinable: boolean
   reason?: string
 }
+
+/** A pool a browsing passenger could join instead of starting a new one. */
+export interface PoolOption {
+  id: string
+  driverName: string
+  vehicleName: string
+  originZone: ZoneRef
+  seatsAvailable: number
+  seatCapacity: number
+  windowClosesInSeconds: number
+  joinable: boolean
+  reason?: string
+}
+
+export interface JoinAttempt {
+  ok: boolean
+  reason?: string
+  message?: string
+}

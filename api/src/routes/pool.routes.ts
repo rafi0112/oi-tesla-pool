@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { validate } from '../middleware/validate'
+import { validate, validateQuery } from '../middleware/validate'
 import { authenticate } from '../middleware/auth'
 import { requireRole } from '../middleware/requireRole'
 import {
@@ -7,11 +7,19 @@ import {
   joinPoolSchema, joinPoolHandler,
   activePoolHandler, closePoolHandler, arriveHandler,
   startTripHandler, dropoffHandler, completeTripHandler,
+  nearbyPoolsQuerySchema, nearbyPoolsHandler,
 } from '../controllers/pool.controller'
 
 const router = Router()
 
-router.use(authenticate, requireRole('DRIVER'))
+router.use(authenticate)
+
+// Passenger: browse joinable pools before booking. Must precede the blanket
+// driver-only guard below, and precede any /:id route so "nearby" is never
+// read as a pool id.
+router.get('/nearby', requireRole('PASSENGER'), validateQuery(nearbyPoolsQuerySchema), nearbyPoolsHandler)
+
+router.use(requireRole('DRIVER'))
 
 // Must precede any /:id route so "active" is not read as a pool id.
 router.get('/active', activePoolHandler)

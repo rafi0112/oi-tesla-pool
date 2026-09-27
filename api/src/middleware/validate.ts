@@ -14,6 +14,24 @@ export function validate(schema: ZodSchema) {
   }
 }
 
+/**
+ * Query-string counterpart to validate(): coerces and checks req.query, then
+ * hands the parsed, typed value to the handler via res.locals.query rather
+ * than reassigning req.query, which Express treats as derived from its own
+ * query-parser setting rather than a plain writable property.
+ */
+export function validateQuery(schema: ZodSchema) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const result = schema.safeParse(req.query)
+    if (!result.success) {
+      const details = formatZodError(result.error)
+      return next(new ValidationError(details))
+    }
+    res.locals.query = result.data
+    next()
+  }
+}
+
 function formatZodError(err: ZodError): Record<string, string[]> {
   const out: Record<string, string[]> = {}
   for (const issue of err.issues) {

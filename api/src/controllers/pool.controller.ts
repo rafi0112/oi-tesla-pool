@@ -5,10 +5,29 @@ import {
   joinPool, joinPoolSchema,
   startTrip, closePool, markArrived,
   dropOffPassenger, completeTrip, getActivePool,
+  findNearbyPools,
 } from '../services/pool.service'
+import { POOL_POLICY } from '../domain/matching'
 import { AuthedRequest } from './auth.controller'
 
 export { createPoolSchema, joinPoolSchema }
+
+export const nearbyPoolsQuerySchema = z.object({
+  pickupZoneId:      z.coerce.number().int().positive(),
+  destinationZoneId: z.coerce.number().int().positive(),
+  seats:             z.coerce.number().int().min(1).max(POOL_POLICY.maxSeatsPerBooking),
+})
+
+export async function nearbyPoolsHandler(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { pickupZoneId, destinationZoneId, seats } =
+      res.locals.query as z.infer<typeof nearbyPoolsQuerySchema>
+    const pools = await findNearbyPools(pickupZoneId, destinationZoneId, seats)
+    res.json({ pools })
+  } catch (err) {
+    next(err)
+  }
+}
 
 export async function createPoolHandler(req: Request, res: Response, next: NextFunction) {
   try {

@@ -21,8 +21,8 @@ export async function createRideHandler(req: Request, res: Response, next: NextF
   try {
     const authed = req as AuthedRequest
     const key = (req.headers['idempotency-key'] as string) ?? null
-    const dto = await requestRide(authed.user.id, req.body as z.infer<typeof createRideSchema>, key)
-    res.status(201).json({ ride: dto })
+    const result = await requestRide(authed.user.id, req.body as z.infer<typeof createRideSchema>, key)
+    res.status(201).json(result)
   } catch (err) {
     next(err)
   }

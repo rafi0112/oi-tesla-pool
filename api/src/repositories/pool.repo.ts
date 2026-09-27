@@ -10,6 +10,8 @@ export interface PoolRow {
   origin_zone_name: string
   seats_available: number
   seat_capacity: number
+  vehicle_name: string
+  driver_name: string
   status: string
   wait_for_pool: boolean
   created_at: string
@@ -35,11 +37,14 @@ export interface PoolMemberRow {
 
 const SELECT_POOL = `
   SELECT p.*,
-         z.name AS origin_zone_name,
-         v.seat_capacity
+         z.name   AS origin_zone_name,
+         v.seat_capacity,
+         v.name   AS vehicle_name,
+         drv.name AS driver_name
   FROM   pools p
-  JOIN   zones    z ON z.id = p.origin_zone_id
-  JOIN   vehicles v ON v.id = p.vehicle_id
+  JOIN   zones    z   ON z.id   = p.origin_zone_id
+  JOIN   vehicles v   ON v.id   = p.vehicle_id
+  JOIN   users    drv ON drv.id = v.driver_id
 `
 
 export async function findVehicleByDriver(driverId: string): Promise<VehicleRow | null> {
@@ -70,6 +75,20 @@ export async function findActivePoolByDriver(driverId: string): Promise<PoolRow 
     [driverId, ACTIVE_POOL_STATUSES],
   )
   return rows[0] ?? null
+}
+
+/**
+ * FORMING pools open in this pickup zone — candidates a passenger booking from
+ * here could self-join. Deliberately excludes ACCEPTED: that status means the
+ * driver either never opened a window (waitForPool false) or explicitly closed
+ * one (POST /pools/:id/close), and either way is not "still assembling".
+ */
+export async function findFormingPoolsByOriginZone(zoneId: number): Promise<PoolRow[]> {
+  const { rows } = await db.query<PoolRow>(
+    `${SELECT_POOL} WHERE p.origin_zone_id = $1 AND p.status = 'FORMING' ORDER BY p.created_at`,
+    [zoneId],
+  )
+  return rows
 }
 
 export async function findPoolMembers(poolId: string): Promise<PoolMemberRow[]> {

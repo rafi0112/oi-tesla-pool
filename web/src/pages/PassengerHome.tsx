@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ApiError, api } from '../api/client'
-import type { PassengerRide, RideStatus, Zone } from '../api/types'
+import type { JoinAttempt, PassengerRide, PoolOption, RideStatus, Zone } from '../api/types'
 import { useAuth } from '../context/AuthContext'
 import { AppHeader, Avatar } from '../components/Chrome'
 import { RouteRadar } from '../components/RouteRadar'
@@ -29,6 +29,7 @@ export function PassengerHome() {
   const { user } = useAuth()
   const zones = useResource(() => api.zones().then(r => r.zones))
   const rides = useResource(() => api.myRides().then(r => r.rides), { pollMs: POLL_MS })
+  const [notice, setNotice] = useState<{ tone: 'success' | 'info'; text: string } | null>(null)
 
   const active = rides.data?.find(r => ACTIVE.has(r.status))
   const past = useMemo(
@@ -38,6 +39,17 @@ export function PassengerHome() {
 
   const loading = rides.loading || zones.loading
   const failure = rides.error ?? zones.error
+
+  // Booking a ride can immediately match it into an existing pool — this
+  // surfaces what happened once the fresh ride list has replaced the form.
+  async function afterBooked(joinAttempt?: JoinAttempt) {
+    if (joinAttempt?.ok) {
+      setNotice({ tone: 'success', text: 'Matched — someone is already heading your way!' })
+    } else if (joinAttempt && !joinAttempt.ok) {
+      setNotice({ tone: 'info', text: `${joinAttempt.message ?? 'That pool wasn’t available.'} You're still booked — waiting for a driver.` })
+    }
+    await rides.reload()
+  }
 
   return (
     <div className="grain min-h-dvh">
@@ -50,6 +62,12 @@ export function PassengerHome() {
       <main className="mx-auto max-w-7xl px-4 pb-16 pt-8 sm:px-6 lg:pt-12">
         <Greeting name={user ? firstName(user.name) : ''} ride={active} />
 
+        {notice && (
+          <div className="mt-5">
+            <Notice tone={notice.tone} onDismiss={() => setNotice(null)}>{notice.text}</Notice>
+          </div>
+        )}
+
         <div className="mt-8 grid items-start gap-6 lg:grid-cols-12 lg:gap-8">
           <section className="lg:col-span-8" aria-label={active ? 'Your ride' : 'Book a ride'}>
             {loading ? (
@@ -61,7 +79,7 @@ export function PassengerHome() {
             ) : active && zones.data ? (
               <RideTicket ride={active} zones={zones.data} onChanged={rides.reload} />
             ) : zones.data ? (
-              <BookingTicket zones={zones.data} onBooked={rides.reload} />
+              <BookingTicket zones={zones.data} onBooked={afterBooked} />
             ) : null}
           </section>
 
@@ -98,11 +116,12 @@ function Greeting({ name, ride }: { name: string; ride?: PassengerRide }) {
 
 /* ─────────────────────────────────────────────────────────── booking ── */
 
-function BookingTicket({ zones, onBooked }: { zones: Zone[]; onBooked: () => Promise<void> }) {
+function BookingTicket({ zones, onBooked }: { zones: Zone[]; onBooked: (joinAttempt?: JoinAttempt) => Promise<void> }) {
   const defaultPickup = zones.find(z => z.name === 'Banani')?.id ?? zones[0].id
   const [pickupId, setPickupId] = useState<number>(defaultPickup)
   const [destinationId, setDestinationId] = useState<number | null>(null)
   const [seats, setSeats] = useState(1)
+  const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -111,10 +130,29 @@ function BookingTicket({ zones, onBooked }: { zones: Zone[]; onBooked: () => Pro
   const idempotencyKey = useRef(crypto.randomUUID())
 
   const ready = destinationId !== null && destinationId !== pickupId
+  const tripKey = `${pickupId}-${destinationId}-${seats}`
   const quote = useResource(
     () => api.quote({ pickupZoneId: pickupId, destinationZoneId: destinationId!, seats }),
-    { enabled: ready, key: `${pickupId}-${destinationId}-${seats}` },
+    { enabled: ready, key: tripKey },
   )
+
+  // Other passengers already on this route — polled, since a pool can fill up
+  // or close its window while this form is open.
+  const pools = useResource(
+    () => api.nearbyPools({ pickupZoneId: pickupId, destinationZoneId: destinationId!, seats }).then(r => r.pools),
+    { enabled: ready, pollMs: POLL_MS, key: tripKey },
+  )
+
+  // A different trip invalidates whatever was chosen for the old one.
+  useEffect(() => setSelectedPoolId(null), [tripKey])
+
+  // If the poll shows the chosen pool filled up or closed its window, fall
+  // back to "book new" rather than silently submitting a stale choice.
+  useEffect(() => {
+    if (selectedPoolId && pools.data && !pools.data.some(p => p.id === selectedPoolId && p.joinable)) {
+      setSelectedPoolId(null)
+    }
+  }, [pools.data, selectedPoolId])
 
   const pickup = zones.find(z => z.id === pickupId)
   const destination = zones.find(z => z.id === destinationId)
@@ -134,9 +172,12 @@ function BookingTicket({ zones, onBooked }: { zones: Zone[]; onBooked: () => Pro
     setSubmitting(true)
     setError(null)
     try {
-      await api.bookRide({ pickupZoneId: pickupId, destinationZoneId: destinationId!, seats }, idempotencyKey.current)
+      const { joinAttempt } = await api.bookRide(
+        { pickupZoneId: pickupId, destinationZoneId: destinationId!, seats, poolId: selectedPoolId ?? undefined },
+        idempotencyKey.current,
+      )
       idempotencyKey.current = crypto.randomUUID()
-      await onBooked()
+      await onBooked(joinAttempt)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Booking failed')
       setSubmitting(false)
@@ -204,6 +245,19 @@ function BookingTicket({ zones, onBooked }: { zones: Zone[]; onBooked: () => Pro
               </p>
             )}
           </fieldset>
+
+          {ready && (
+            <div>
+              <p className="eyebrow mb-2">Riders already heading this way</p>
+              <NearbyPools
+                pools={pools.data}
+                loading={pools.loading}
+                error={pools.error}
+                selectedId={selectedPoolId}
+                onSelect={setSelectedPoolId}
+              />
+            </div>
+          )}
         </div>
 
         {/* map */}
@@ -265,12 +319,78 @@ function BookingTicket({ zones, onBooked }: { zones: Zone[]; onBooked: () => Pro
           {error && <Notice tone="error" onDismiss={() => setError(null)}>{error}</Notice>}
           <button type="button" onClick={book} disabled={!ready || submitting} className="btn-primary !px-7 !py-4 text-base">
             {submitting ? <Spinner /> : null}
-            {submitting ? 'Requesting' : 'Request Bullet'}
+            {submitting ? 'Requesting' : selectedPoolId ? 'Join pool & request' : 'Request Bullet'}
             {!submitting && <span aria-hidden>→</span>}
           </button>
         </div>
       </div>
     </article>
+  )
+}
+
+function NearbyPools({
+  pools, loading, error, selectedId, onSelect,
+}: {
+  pools: PoolOption[] | undefined
+  loading: boolean
+  error: ApiError | null
+  selectedId: string | null
+  onSelect: (id: string | null) => void
+}) {
+  if (loading && !pools) return <Skeleton className="h-11" />
+  if (error) return <p className="text-sm text-alert">{error.message}</p>
+
+  if (!pools || pools.length === 0) {
+    return (
+      <p className="rounded-lg border border-dashed border-line-2 bg-surface-2/40 px-3 py-2.5 text-sm text-ink-3">
+        Nobody is pooling this route yet — you’ll start a new pool.
+      </p>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        onClick={() => onSelect(null)}
+        aria-pressed={selectedId === null}
+        className={`flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-left transition-colors ${
+          selectedId === null ? 'border-signal bg-signal-soft' : 'border-line bg-surface-2/40 hover:border-line-2'
+        }`}
+      >
+        <span className="text-sm font-semibold text-ink">Book my own pool</span>
+        <span className="text-xs text-ink-3">Solo for now</span>
+      </button>
+
+      {pools.map(p => (
+        <button
+          key={p.id}
+          type="button"
+          disabled={!p.joinable}
+          onClick={() => onSelect(p.id)}
+          aria-pressed={selectedId === p.id}
+          className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+            selectedId === p.id ? 'border-signal bg-signal-soft' : 'border-line bg-surface-2/40 hover:border-line-2 disabled:hover:border-line'
+          }`}
+        >
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-semibold text-ink">
+              Join {firstName(p.driverName)}’s {p.vehicleName}
+            </span>
+            <span className="block truncate text-xs text-ink-3">
+              {p.joinable
+                ? `${p.seatsAvailable} of ${p.seatCapacity} seats left · pay 20% less`
+                : p.reason}
+            </span>
+          </span>
+          {p.joinable && (
+            <span className="shrink-0 font-mono text-xs font-bold text-signal">
+              {Math.floor(p.windowClosesInSeconds / 60)}:{String(p.windowClosesInSeconds % 60).padStart(2, '0')}
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
   )
 }
 

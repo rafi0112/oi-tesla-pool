@@ -1,6 +1,6 @@
 import type {
   DriverPool, DriverProfile, DriverRequest, PassengerRide,
-  Quote, RideEvent, User, Zone,
+  Quote, RideEvent, User, Zone, PoolOption, JoinAttempt,
 } from './types'
 
 const BASE = import.meta.env.VITE_API_URL ?? '/api'
@@ -35,6 +35,7 @@ export function setUnauthorizedHandler(fn: (() => void) | null) {
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH'
   body?: unknown
+  query?: Record<string, string | number>
   headers?: Record<string, string>
 }
 
@@ -43,9 +44,13 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json'
   if (token) headers.Authorization = `Bearer ${token}`
 
+  const qs = opts.query
+    ? `?${new URLSearchParams(Object.entries(opts.query).map(([k, v]) => [k, String(v)]))}`
+    : ''
+
   let res: Response
   try {
-    res = await fetch(`${BASE}${path}`, {
+    res = await fetch(`${BASE}${path}${qs}`, {
       method: opts.method ?? 'GET',
       headers,
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
@@ -90,11 +95,13 @@ export const api = {
 
   myRides: () => request<{ rides: PassengerRide[] }>('/rides/mine'),
   ride: (id: string) => request<{ ride: PassengerRide; timeline: RideEvent[] }>(`/rides/${id}`),
+  nearbyPools: (query: { pickupZoneId: number; destinationZoneId: number; seats: number }) =>
+    request<{ pools: PoolOption[] }>('/pools/nearby', { query }),
   bookRide: (
-    body: { pickupZoneId: number; destinationZoneId: number; seats: number },
+    body: { pickupZoneId: number; destinationZoneId: number; seats: number; poolId?: string },
     idempotencyKey: string,
   ) =>
-    request<{ ride: PassengerRide }>('/rides', {
+    request<{ ride: PassengerRide; joinAttempt?: JoinAttempt }>('/rides', {
       method: 'POST',
       body,
       headers: { 'Idempotency-Key': idempotencyKey },

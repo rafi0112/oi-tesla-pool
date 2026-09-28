@@ -9,7 +9,7 @@ import { StatusTrack } from '../components/StatusTrack'
 import { EmptyState, ErrorState, LoadingState, Notice, Skeleton, Spinner, StaleBadge } from '../components/States'
 import { riderColor } from '../components/riderColors'
 import { POLL_MS, useNow, useResource } from '../lib/useResource'
-import { POOL_STATUS_LABEL, firstName, formatTaka, plural, relativeTime } from '../lib/format'
+import { POOL_STATUS_LABEL, firstName, formatTaka, plural, relativeTime, shortDate } from '../lib/format'
 
 const TRIP_STEPS = [
   { key: 'FORMING',        label: 'Forming' },
@@ -29,9 +29,12 @@ export function DriverHome() {
 
   const pool = useResource(() => api.activePool().then(r => r.pool), { pollMs: POLL_MS, enabled: online })
   const feed = useResource(() => api.requestFeed().then(r => r.requests), { pollMs: POLL_MS, enabled: online })
+  // This driver's own finished trips — fetched regardless of online status,
+  // and freshly reloaded whenever a trip completes so it never goes stale.
+  const history = useResource(() => api.driverHistory().then(r => r.pools))
 
   async function refresh() {
-    await Promise.all([pool.reload(), feed.reload()])
+    await Promise.all([pool.reload(), feed.reload(), history.reload()])
   }
 
   // Any refused action surfaces here with the API's own wording.
@@ -130,6 +133,10 @@ export function DriverHome() {
             </section>
           </div>
         )}
+
+        <div className="mt-8">
+          <TripHistory pools={history.data} loading={history.loading} error={history.error} onRetry={history.reload} />
+        </div>
       </main>
     </div>
   )
@@ -425,6 +432,83 @@ function RideChip({ status }: { status: string }) {
     : 'bg-surface-2 text-ink-2'
   const label = status === 'MATCHED' ? 'Waiting' : status === 'PICKED_UP' ? 'Aboard' : status === 'DROPPED_OFF' ? 'Dropped' : 'Cancelled'
   return <span className={`rounded-md px-2 py-1 font-mono text-[0.62rem] font-bold uppercase tracking-wider ${tone}`}>{label}</span>
+}
+
+/* ───────────────────────────────────────────────────────── history ── */
+
+/**
+ * This driver's own finished trips, fetched from GET /drivers/history —
+ * scoped server-side to the calling driver's own id, so nothing here is
+ * hardcoded and a second driver on this same console would see only theirs.
+ */
+function TripHistory({
+  pools, loading, error, onRetry,
+}: {
+  pools: DriverPool[] | undefined
+  loading: boolean
+  error: ApiError | null
+  onRetry: () => void
+}) {
+  return (
+    <section className="card animate-rise" style={{ animationDelay: '140ms' }} aria-labelledby="history-title">
+      <div className="flex items-baseline justify-between border-b border-line px-5 py-4 sm:px-6">
+        <h2 id="history-title" className="text-lg font-extrabold tracking-tight">Trip history</h2>
+        {pools && pools.length > 0 && <span className="font-mono text-xs text-ink-3">{pools.length}</span>}
+      </div>
+
+      {loading ? (
+        <div className="space-y-3 p-5 sm:p-6">
+          {[0, 1].map(i => <Skeleton key={i} className="h-20" />)}
+        </div>
+      ) : error ? (
+        <div className="p-5 sm:p-6"><ErrorState error={error} onRetry={onRetry} /></div>
+      ) : !pools || pools.length === 0 ? (
+        <EmptyState title="No finished trips yet." icon={<BulletMark />}>
+          Trips you complete or cancel collect here.
+        </EmptyState>
+      ) : (
+        <ul className="divide-y divide-line">
+          {pools.map(p => <TripHistoryRow key={p.id} pool={p} />)}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function TripHistoryRow({ pool }: { pool: DriverPool }) {
+  const cancelled = pool.status === 'CANCELLED'
+  return (
+    <li className="px-5 py-4 sm:px-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="font-bold text-ink">From {pool.originZone.name}</p>
+          <p className="font-mono text-[0.68rem] text-ink-3">{shortDate(pool.createdAt)}</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className={`rounded-md px-2 py-1 font-mono text-[0.62rem] font-bold uppercase tracking-wider ${cancelled ? 'bg-alert-soft text-alert' : 'bg-signal-soft text-signal'}`}>
+            {POOL_STATUS_LABEL[pool.status]}
+          </span>
+          {!cancelled && (
+            <span className="font-mono text-sm font-bold text-signal">{formatTaka(pool.grossFarePaisa)}</span>
+          )}
+        </div>
+      </div>
+
+      {pool.passengers.length > 0 && (
+        <ul className="mt-2.5 space-y-1.5">
+          {pool.passengers.map(p => (
+            <li key={p.rideId} className="flex items-center gap-2.5">
+              <Avatar name={p.name} size={24} />
+              <span className="min-w-0 flex-1 truncate text-xs text-ink-2">
+                <span className="font-semibold text-ink">{p.name}</span> · {p.pickupZone.name} → {p.destinationZone.name}
+              </span>
+              <span className="shrink-0 font-mono text-xs font-bold text-ink-3">{formatTaka(p.farePaisa)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
+  )
 }
 
 /* ──────────────────────────────────────────────────────── the feed ── */

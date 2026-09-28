@@ -121,6 +121,7 @@ export const api = {
   setAvailability: (body: { isOnline: boolean; zoneId?: number }) =>
     request<{ driver: DriverProfile }>('/drivers/me', { method: 'PATCH', body }),
   requestFeed: () => request<{ requests: DriverRequest[] }>('/drivers/requests'),
+  driverHistory: () => request<{ pools: DriverPool[] }>('/drivers/history'),
   activePool: () => request<{ pool: DriverPool | null }>('/pools/active'),
   createPool: (rideRequestId: string) =>
     request<{ pool: DriverPool }>('/pools', { method: 'POST', body: { rideRequestId } }),

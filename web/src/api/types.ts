@@ -68,6 +68,8 @@ export interface DriverProfile {
   isOnline: boolean
   currentZone: ZoneRef | null
   vehicle: { name: string; seatCapacity: number } | null
+  /** Lifetime earnings across every fully dropped-off ride this driver has completed. */
+  totalEarningsPaisa: number
 }
 
 export interface DriverPassenger {
@@ -77,6 +79,7 @@ export interface DriverPassenger {
   status: RideStatus
   pickupZone: ZoneRef
   destinationZone: ZoneRef
+  farePaisa: number
 }
 
 export interface DriverPool {
@@ -88,6 +91,8 @@ export interface DriverPool {
   /** Null: no one aboard is waiting for more. A timestamp: the live deadline. */
   waitUntil: string | null
   createdAt: string
+  /** Sum of every member's fare — what this pool pays in total, right now. */
+  grossFarePaisa: number
   passengers: DriverPassenger[]
 }
 
@@ -101,6 +106,13 @@ export interface DriverRequest {
   destinationZone: ZoneRef
   requestedAt: string
   joinable: boolean
+  /**
+   * What accepting this request would pay, in total, the moment it's accepted:
+   * this passenger's own fare alone if the driver has no pool yet, or the
+   * whole pool's new total (every current member plus this one, re-priced at
+   * the bigger shared-ride discount) if the driver already has an active pool.
+   */
+  grossFarePaisa: number
   reason?: string
 }
 

@@ -475,38 +475,76 @@ function TripHistory({
   )
 }
 
+/**
+ * A finished trip renders one of two ways, purely from how many passengers
+ * actually rode in it — never a stored flag, so it can't drift from the data:
+ *   - 2+ passengers: a genuinely pooled trip, grouped under one pool-level
+ *     card with every rider listed and the pool's combined gross fare.
+ *   - 0 or 1: a single ride — one line, no pool framing, since nobody ever
+ *     shared it.
+ */
 function TripHistoryRow({ pool }: { pool: DriverPool }) {
   const cancelled = pool.status === 'CANCELLED'
+  const pooled = pool.passengers.length >= 2
+  const solo = pool.passengers[0]
+
+  if (!pooled) {
+    return (
+      <li className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 sm:px-6">
+        <div className="flex min-w-0 items-center gap-2.5">
+          {solo && <Avatar name={solo.name} size={28} />}
+          <div className="min-w-0">
+            <p className="truncate font-bold text-ink">
+              {solo ? solo.name : `From ${pool.originZone.name}`}
+            </p>
+            <p className="truncate text-xs text-ink-3">
+              {solo ? `${solo.pickupZone.name} → ${solo.destinationZone.name}` : shortDate(pool.createdAt)}
+              {solo?.bonusPaisa ? <span className="text-marigold-ink"> · +{formatTaka(solo.bonusPaisa)} bonus</span> : null}
+            </p>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-3">
+          <span className={`rounded-md px-2 py-1 font-mono text-[0.62rem] font-bold uppercase tracking-wider ${cancelled ? 'bg-alert-soft text-alert' : 'bg-signal-soft text-signal'}`}>
+            {cancelled ? 'Cancelled' : 'Single ride'}
+          </span>
+          {solo && <span className="font-mono text-sm font-bold text-ink-2">{formatTaka(solo.farePaisa)}</span>}
+        </div>
+      </li>
+    )
+  }
+
   return (
     <li className="px-5 py-4 sm:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="font-bold text-ink">From {pool.originZone.name}</p>
+          <p className="flex items-center gap-2 font-bold text-ink">
+            From {pool.originZone.name}
+            <span className="rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-[0.6rem] font-bold uppercase tracking-wider text-ink-3">
+              Pooled · {pool.passengers.length}
+            </span>
+          </p>
           <p className="font-mono text-[0.68rem] text-ink-3">{shortDate(pool.createdAt)}</p>
         </div>
         <div className="flex items-center gap-3">
-          <span className={`rounded-md px-2 py-1 font-mono text-[0.62rem] font-bold uppercase tracking-wider ${cancelled ? 'bg-alert-soft text-alert' : 'bg-signal-soft text-signal'}`}>
+          <span className="rounded-md bg-signal-soft px-2 py-1 font-mono text-[0.62rem] font-bold uppercase tracking-wider text-signal">
             {POOL_STATUS_LABEL[pool.status]}
           </span>
-          {!cancelled && (
-            <span className="font-mono text-sm font-bold text-signal">{formatTaka(pool.grossFarePaisa)}</span>
-          )}
+          <span className="font-mono text-sm font-bold text-signal">{formatTaka(pool.grossFarePaisa)}</span>
         </div>
       </div>
 
-      {pool.passengers.length > 0 && (
-        <ul className="mt-2.5 space-y-1.5">
-          {pool.passengers.map(p => (
-            <li key={p.rideId} className="flex items-center gap-2.5">
-              <Avatar name={p.name} size={24} />
-              <span className="min-w-0 flex-1 truncate text-xs text-ink-2">
-                <span className="font-semibold text-ink">{p.name}</span> · {p.pickupZone.name} → {p.destinationZone.name}
-              </span>
-              <span className="shrink-0 font-mono text-xs font-bold text-ink-3">{formatTaka(p.farePaisa)}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+      <ul className="mt-2.5 space-y-1.5">
+        {pool.passengers.map(p => (
+          <li key={p.rideId} className="flex items-center gap-2.5">
+            <Avatar name={p.name} size={24} />
+            <span className="min-w-0 flex-1 truncate text-xs text-ink-2">
+              <span className="font-semibold text-ink">{p.name}</span> · {p.pickupZone.name} → {p.destinationZone.name}
+              {p.bonusPaisa > 0 && <span className="text-marigold-ink"> · +{formatTaka(p.bonusPaisa)}</span>}
+            </span>
+            <span className="shrink-0 font-mono text-xs font-bold text-ink-3">{formatTaka(p.farePaisa)}</span>
+          </li>
+        ))}
+      </ul>
     </li>
   )
 }
@@ -579,7 +617,17 @@ function RequestRow({
       <div className="flex items-start gap-3">
         <Avatar name={request.passengerName} size={34} />
         <div className="min-w-0 flex-1">
-          <p className="truncate font-bold">{request.passengerName}</p>
+          <p className="flex items-center gap-2 truncate font-bold">
+            {request.passengerName}
+            {request.bonusPaisa > 0 && (
+              <span
+                className="shrink-0 rounded-md bg-marigold-soft px-1.5 py-0.5 font-mono text-[0.6rem] font-bold uppercase tracking-wider text-marigold-ink"
+                title="Offered on top to attract a driver faster"
+              >
+                +{formatTaka(request.bonusPaisa)}
+              </span>
+            )}
+          </p>
           <p className="truncate text-sm text-ink-3">
             {request.pickupZone.name} → {request.destinationZone.name}
           </p>

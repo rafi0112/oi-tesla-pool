@@ -9,7 +9,7 @@ import { StatusTrack } from '../components/StatusTrack'
 import { EmptyState, ErrorState, LoadingState, Notice, Skeleton, Spinner, StaleBadge } from '../components/States'
 import { riderColor } from '../components/riderColors'
 import { POLL_MS, useNow, useResource } from '../lib/useResource'
-import { POOL_STATUS_LABEL, firstName, plural, relativeTime } from '../lib/format'
+import { POOL_STATUS_LABEL, firstName, formatTaka, plural, relativeTime } from '../lib/format'
 
 const TRIP_STEPS = [
   { key: 'FORMING',        label: 'Forming' },
@@ -47,7 +47,7 @@ export function DriverHome() {
   }
 
   return (
-    <div className="theme-console grain min-h-dvh bg-paper text-ink">
+    <div className="grain min-h-dvh bg-paper text-ink">
       <AppHeader sub="Driver console">
         <div className="flex justify-end sm:justify-start sm:pl-4">
           <StaleBadge stale={pool.stale || feed.stale} />
@@ -77,6 +77,7 @@ export function DriverHome() {
               isOnline={profile.data.isOnline}
               zoneId={profile.data.currentZone?.id ?? null}
               vehicle={profile.data.vehicle}
+              totalEarningsPaisa={profile.data.totalEarningsPaisa}
               locked={Boolean(pool.data)}
               onChange={async (isOnline, zoneId) => {
                 await run(() => api.setAvailability(isOnline ? { isOnline, zoneId: zoneId! } : { isOnline }))
@@ -137,12 +138,13 @@ export function DriverHome() {
 /* ─────────────────────────────────────────────────────── availability ── */
 
 function AvailabilityBar({
-  zones, isOnline, zoneId, vehicle, locked, onChange,
+  zones, isOnline, zoneId, vehicle, totalEarningsPaisa, locked, onChange,
 }: {
   zones: Zone[]
   isOnline: boolean
   zoneId: number | null
   vehicle: { name: string; seatCapacity: number } | null
+  totalEarningsPaisa: number
   locked: boolean
   onChange: (isOnline: boolean, zoneId: number | null) => Promise<void>
 }) {
@@ -157,6 +159,15 @@ function AvailabilityBar({
     setBusy(true)
     await onChange(!isOnline, choice)
     setBusy(false)
+  }
+
+  async function changeZone(newZoneId: number) {
+    setChoice(newZoneId)
+    if (isOnline) {
+      setBusy(true)
+      await onChange(true, newZoneId)
+      setBusy(false)
+    }
   }
 
   return (
@@ -177,6 +188,11 @@ function AvailabilityBar({
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="text-right sm:text-left" title="Lifetime earnings across every completed trip">
+          <p className="eyebrow">Total earned</p>
+          <p className="font-mono text-lg font-bold text-signal">{formatTaka(totalEarningsPaisa)}</p>
+        </div>
+
         <label className="flex items-center gap-2.5">
           <span className="eyebrow shrink-0">Zone</span>
           <span className="relative block">
@@ -185,7 +201,7 @@ function AvailabilityBar({
               value={choice ?? ''}
               disabled={locked}
               title={locked ? 'Finish the trip before changing zone' : undefined}
-              onChange={e => setChoice(Number(e.target.value))}
+              onChange={e => changeZone(Number(e.target.value))}
             >
               {zones.map(z => <option key={z.id} value={z.id}>{z.name}</option>)}
             </select>
@@ -275,6 +291,9 @@ function ActivePool({
           )}
         </div>
         <div className="flex items-center gap-3">
+          <span className="font-mono text-sm font-bold text-signal" title="Gross fare for the whole pool">
+            {formatTaka(pool.grossFarePaisa)}
+          </span>
           <SeatPips capacity={pool.seatCapacity} occupants={occupants} size="sm" />
           <span className="font-mono text-sm font-bold">
             {pool.seatCapacity - pool.seatsAvailable}<span className="text-ink-3">/{pool.seatCapacity}</span>
@@ -313,6 +332,7 @@ function ActivePool({
                 {p.pickupZone.name} → {p.destinationZone.name} · {plural(p.seats, 'seat')}
               </p>
             </div>
+            <span className="font-mono text-sm font-bold text-ink-2">{formatTaka(p.farePaisa)}</span>
             <RideChip status={p.status} />
             {pool.status === 'EN_ROUTE' && p.status === 'PICKED_UP' && (
               <button
@@ -486,6 +506,12 @@ function RequestRow({
               : ' · won’t wait for others'}
           </p>
         </div>
+        <span
+          className="shrink-0 font-mono text-sm font-bold text-signal"
+          title={hasPool ? 'Pool total if you accept this' : 'Fare if you accept this'}
+        >
+          {formatTaka(request.grossFarePaisa)}
+        </span>
       </div>
 
       {!request.joinable && request.reason && (

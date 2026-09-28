@@ -4,7 +4,7 @@ import { ApiError, api } from '../api/client'
 import { homeFor, useAuth } from '../context/AuthContext'
 import { Logo } from '../components/Logo'
 import { RouteRadar } from '../components/RouteRadar'
-import { Avatar } from '../components/Chrome'
+import { Avatar, ThemeToggle } from '../components/Chrome'
 import { Notice, Spinner } from '../components/States'
 import { useResource } from '../lib/useResource'
 import { angleDiff, bearingDeg } from '../lib/geo'
@@ -56,7 +56,8 @@ export function Login() {
     <div className="grid min-h-dvh lg:grid-cols-[1.15fr_1fr]">
       <StoryPanel />
 
-      <main className="grain flex items-center justify-center px-5 py-12 sm:px-10">
+      <main className="grain relative flex items-center justify-center px-5 py-12 sm:px-10">
+        <ThemeToggle className="absolute right-4 top-4 sm:right-6 sm:top-6" />
         <div className="w-full max-w-md animate-rise">
           <p className="eyebrow">Welcome aboard</p>
           <h2 className="mt-2 text-3xl font-extrabold tracking-[-0.03em] text-ink">Sign in</h2>

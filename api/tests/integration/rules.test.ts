@@ -131,7 +131,7 @@ describe('ownership', () => {
     // A second driver, who owns nothing.
     await api().post('/auth/register').send({
       name: 'Kamal Mia', email: 'kamal@oitesla.test',
-      password: 'Password123!', role: 'DRIVER',
+      password: 'Password123!', role: 'DRIVER', gender: 'MALE',
     })
     const kamal = (await api().post('/auth/login').send({
       email: 'kamal@oitesla.test', password: 'Password123!',

@@ -56,6 +56,8 @@ describe('GET /pools/nearby', () => {
     expect(option.joinable).toBe(true)
     expect(option.reason).toBeUndefined()
     expect(option.windowClosesInSeconds).toBeGreaterThan(0)
+    // Nusrat is aboard and FEMALE — her gender is visible, her name is not.
+    expect(option.memberGenders).toEqual(['FEMALE'])
     expect(JSON.stringify(option)).not.toMatch(/paisa|fare|Nusrat/i)
   })
 

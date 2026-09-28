@@ -1,7 +1,12 @@
 import argon2 from 'argon2'
 import { db } from '../../src/db/pool'
 import { config } from '../../src/config'
-import { ZONES, DISTANCES, VEHICLE, SEED_PASSWORD } from '../../src/db/seedData'
+import { ZONES, DISTANCES, VEHICLE, SEED_PASSWORD, USERS } from '../../src/db/seedData'
+
+/** Falls back to 'OTHER' for a test-only name that isn't part of the story cast. */
+function genderFor(name: string): string {
+  return USERS.find(u => u.name === name)?.gender ?? 'OTHER'
+}
 
 export const TEST_PASSWORD = SEED_PASSWORD
 
@@ -52,9 +57,9 @@ export async function seedWorld(passengerNames: string[]): Promise<TestWorld> {
   }
 
   const { rows: driverRows } = await db.query<{ id: string }>(
-    `INSERT INTO users (name, email, password_hash, role)
-     VALUES ($1, $2, $3, 'DRIVER') RETURNING id`,
-    ['Jashim Uddin', 'jashim@oitesla.test', hash],
+    `INSERT INTO users (name, email, password_hash, role, gender)
+     VALUES ($1, $2, $3, 'DRIVER', $4) RETURNING id`,
+    ['Jashim Uddin', 'jashim@oitesla.test', hash, genderFor('Jashim Uddin')],
   )
   const driverId = driverRows[0].id
 
@@ -68,9 +73,9 @@ export async function seedWorld(passengerNames: string[]): Promise<TestWorld> {
   for (const name of passengerNames) {
     const email = `${name.split(' ')[0].toLowerCase()}@oitesla.test`
     const { rows } = await db.query<{ id: string }>(
-      `INSERT INTO users (name, email, password_hash, role)
-       VALUES ($1, $2, $3, 'PASSENGER') RETURNING id`,
-      [name, email, hash],
+      `INSERT INTO users (name, email, password_hash, role, gender)
+       VALUES ($1, $2, $3, 'PASSENGER', $4) RETURNING id`,
+      [name, email, hash, genderFor(name)],
     )
     passengers[name] = rows[0].id
   }

@@ -14,6 +14,8 @@ export interface RideRow {
   /** Minutes this passenger is willing to have the pool wait for more riders. */
   wait_minutes: number
   quoted_fare_paisa: number
+  /** What this passenger chose to add on top, to attract a driver faster — already folded into quoted_fare_paisa. */
+  bonus_paisa: number
   final_fare_paisa: number | null
   status: string
   idempotency_key: string | null
@@ -38,6 +40,8 @@ export interface RideRow {
   vehicle_name: string | null
   /** Null until the passenger rates this ride — only possible once DROPPED_OFF. */
   feedback: FeedbackRow | null
+  /** The reason the most recent CANCELLED transition recorded — null if never cancelled. */
+  cancel_reason: string | null
 }
 
 export interface FeedbackRow {
@@ -73,7 +77,11 @@ const SELECT_RIDE = `
              AND peer.status IN ('MATCHED','PICKED_UP','DROPPED_OFF')) AS shared_genders,
          (SELECT json_build_object('rating', f.rating, 'comment', f.comment, 'createdAt', f.created_at)
             FROM ride_feedback f
-           WHERE f.ride_request_id = r.id) AS feedback
+           WHERE f.ride_request_id = r.id) AS feedback,
+         (SELECT e.reason
+            FROM ride_status_events e
+           WHERE e.ride_request_id = r.id AND e.to_status = 'CANCELLED'
+           ORDER BY e.created_at DESC LIMIT 1) AS cancel_reason
   FROM   ride_requests r
   JOIN   zones pz ON pz.id = r.pickup_zone_id
   JOIN   zones dz ON dz.id = r.destination_zone_id
@@ -129,6 +137,21 @@ export async function findRidesByPassenger(passengerId: string): Promise<RideRow
   return rows.map(mapRide)
 }
 
+/**
+ * This passenger's one active ride, if any — mirrors the condition behind
+ * one_active_ride_per_passenger (assumption 7). Used only to self-heal a
+ * stale REQUESTED ride before a new booking attempt (see requestRide in
+ * ride.service.ts), so "book again after 15 minutes" works immediately
+ * without the passenger first having to open their ride list.
+ */
+export async function findActiveRideByPassenger(passengerId: string): Promise<RideRow | null> {
+  const { rows } = await db.query<RawRideRow>(
+    `${SELECT_RIDE} WHERE r.passenger_id = $1 AND r.status IN ('REQUESTED','MATCHED','PICKED_UP')`,
+    [passengerId],
+  )
+  return rows[0] ? mapRide(rows[0]) : null
+}
+
 export async function createRide(
   tx: PoolClient,
   data: {
@@ -138,17 +161,18 @@ export async function createRide(
     seats: number
     waitMinutes: number
     quotedFarePaisa: number
+    bonusPaisa: number
     idempotencyKey: string | null
   },
 ): Promise<RideRow> {
   const { rows } = await tx.query<{ id: string }>(
     `INSERT INTO ride_requests
-       (passenger_id, pickup_zone_id, destination_zone_id, seats, wait_minutes, quoted_fare_paisa, status, idempotency_key)
-     VALUES ($1, $2, $3, $4, $5, $6, 'REQUESTED', $7)
+       (passenger_id, pickup_zone_id, destination_zone_id, seats, wait_minutes, quoted_fare_paisa, bonus_paisa, status, idempotency_key)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'REQUESTED', $8)
      RETURNING id`,
     [
       data.passengerId, data.pickupZoneId, data.destinationZoneId, data.seats,
-      data.waitMinutes, data.quotedFarePaisa, data.idempotencyKey,
+      data.waitMinutes, data.quotedFarePaisa, data.bonusPaisa, data.idempotencyKey,
     ],
   )
   // Read back through the same client — the insert is not committed yet.
@@ -212,6 +236,7 @@ export interface OpenRequestRow {
   destination_zone_id: number
   destination_zone_name: string
   quoted_fare_paisa: number
+  bonus_paisa: number
   distance_km: number | null
   created_at: string
 }
@@ -220,7 +245,12 @@ interface RawOpenRequestRow extends Omit<OpenRequestRow, 'distance_km'> {
   distance_km: string | null
 }
 
-/** Served by the open_requests_by_zone partial index. */
+/**
+ * Served by the open_requests_by_zone partial index. Ordered by bonus first —
+ * a passenger who offered more to attract a driver surfaces at the top of
+ * every driver's feed in that zone, not just wherever created_at happens to
+ * place them.
+ */
 export async function findOpenRequestsInZone(zoneId: number): Promise<OpenRequestRow[]> {
   const { rows } = await db.query<RawOpenRequestRow>(
     `SELECT r.id,
@@ -232,6 +262,7 @@ export async function findOpenRequestsInZone(zoneId: number): Promise<OpenReques
             r.destination_zone_id,
             dz.name AS destination_zone_name,
             r.quoted_fare_paisa,
+            r.bonus_paisa,
             zd.distance_km,
             r.created_at
      FROM   ride_requests r
@@ -243,7 +274,7 @@ export async function findOpenRequestsInZone(zoneId: number): Promise<OpenReques
            AND zd.to_zone_id   = r.destination_zone_id
      WHERE  r.status = 'REQUESTED'
        AND  r.pickup_zone_id = $1
-     ORDER  BY r.created_at DESC`,
+     ORDER  BY r.bonus_paisa DESC, r.created_at DESC`,
     [zoneId],
   )
   return rows.map(r => ({ ...r, distance_km: r.distance_km === null ? null : Number(r.distance_km) }))
@@ -268,6 +299,7 @@ export interface BoardingMemberRow {
   status: string
   seats: number
   quoted_fare_paisa: number
+  bonus_paisa: number
   distance_km: number | null
 }
 
@@ -281,7 +313,7 @@ export async function lockMatchedMembers(
   poolId: string,
 ): Promise<BoardingMemberRow[]> {
   const { rows } = await tx.query<Omit<BoardingMemberRow, 'distance_km'> & { distance_km: string | null }>(
-    `SELECT r.id, r.status, r.seats, r.quoted_fare_paisa, zd.distance_km
+    `SELECT r.id, r.status, r.seats, r.quoted_fare_paisa, r.bonus_paisa, zd.distance_km
      FROM   ride_requests r
      LEFT JOIN zone_distances zd
             ON zd.from_zone_id = r.pickup_zone_id

@@ -47,9 +47,12 @@ export interface DriverRequestDTO {
    * this passenger's own fare alone if the driver has no pool yet (accepting
    * opens a fresh one), or the whole pool's new total — every current member
    * plus this one, all re-priced at the bigger shared-ride discount — if the
-   * driver already has an active pool this request could join.
+   * driver already has an active pool this request could join. Already
+   * includes this passenger's own bonusPaisa, if any.
    */
   grossFarePaisa: number
+  /** What this passenger added on top to attract a driver faster — 0 if none. */
+  bonusPaisa: number
   reason?: string
 }
 
@@ -69,6 +72,7 @@ export function toDriverRequestDTO(
     requestedAt:     r.created_at,
     joinable:        verdict.ok,
     grossFarePaisa,
+    bonusPaisa:      r.bonus_paisa,
     ...(verdict.ok ? {} : { reason: message ?? verdict.reason }),
   }
 }
@@ -95,16 +99,19 @@ export interface DriverPassengerDTO {
   pickupZone: { id: number; name: string }
   destinationZone: { id: number; name: string }
   farePaisa: number
+  /** What this passenger added on top to attract a driver faster — 0 if none. */
+  bonusPaisa: number
 }
 
 /**
  * A member's own fare recomputed live: fixed forever once final_fare_paisa is
  * written at boarding (startTrip), otherwise priced against how many bookings
- * are currently sharing the pool — mirrors the passenger's own fare display.
+ * are currently sharing the pool, plus their own bonus — mirrors the
+ * passenger's own fare display.
  */
 function memberFarePaisa(m: PoolMemberRow, activeCount: number): number {
   if (m.final_fare_paisa !== null) return m.final_fare_paisa
-  return farePaisaFor(m.distance_km, m.quoted_fare_paisa, activeCount)
+  return farePaisaFor(m.distance_km, m.quoted_fare_paisa, m.bonus_paisa, activeCount)
 }
 
 export function toDriverPoolDTO(pool: PoolRow, members: PoolMemberRow[]): DriverPoolDTO {
@@ -133,5 +140,6 @@ export function toDriverPassengerDTO(m: PoolMemberRow, activeCount: number): Dri
     pickupZone:      { id: m.pickup_zone_id,      name: m.pickup_zone_name      },
     destinationZone: { id: m.destination_zone_id, name: m.destination_zone_name },
     farePaisa:       memberFarePaisa(m, activeCount),
+    bonusPaisa:      m.bonus_paisa,
   }
 }

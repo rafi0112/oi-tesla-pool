@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { updateDriverAvailability, findUserById } from '../repositories/user.repo'
 import { findZoneById } from '../repositories/zone.repo'
 import { findOpenRequestsInZone, sumDriverEarnings } from '../repositories/ride.repo'
+import { expireIfStale } from './ride.service'
 import {
   findActivePoolByDriver, findPoolHistoryByDriver, findVehicleByDriver,
   findPoolMembers, PoolMemberRow,
@@ -78,14 +79,23 @@ export async function getRequestFeed(driverId: string): Promise<DriverRequestDTO
     throw new ForbiddenRoleError('Go online in a zone to see ride requests')
   }
 
-  const requests = await findOpenRequestsInZone(driver.current_zone_id)
+  // Stale requests (unanswered 15+ minutes) drop out of the feed the same
+  // self-healing way they drop out of the passenger's own view — see
+  // expireIfStale in ride.service.ts. Re-query only if something actually
+  // expired, so the common case costs nothing extra.
+  let requests = await findOpenRequestsInZone(driver.current_zone_id)
+  const expired = await Promise.all(requests.map(r => expireIfStale(r.id, r.created_at)))
+  if (expired.some(Boolean)) {
+    requests = await findOpenRequestsInZone(driver.current_zone_id)
+  }
+
   const pool = await findActivePoolByDriver(driverId)
 
   // No pool yet: accepting any one of these opens a brand-new solo pool, so
-  // each request's gross is just its own fare, priced alone.
+  // each request's gross is just its own fare, priced alone, plus its bonus.
   if (!pool) {
     return requests.map(r =>
-      toDriverRequestDTO(r, { ok: true }, farePaisaFor(r.distance_km, r.quoted_fare_paisa, 1)),
+      toDriverRequestDTO(r, { ok: true }, farePaisaFor(r.distance_km, r.quoted_fare_paisa, r.bonus_paisa, 1)),
     )
   }
 
@@ -106,12 +116,12 @@ export async function getRequestFeed(driverId: string): Promise<DriverRequestDTO
     )
 
     // What the pool's total becomes if this request joins: every current
-    // member re-priced at the new, bigger shared count, plus this one's own
-    // fare at that same count.
+    // member re-priced at the new, bigger shared count (plus each member's own
+    // bonus), plus this one's own fare and bonus at that same count.
     const newCount = activeMembers.length + 1
     const grossFarePaisa =
-      activeMembers.reduce((sum, m) => sum + farePaisaFor(m.distance_km, m.quoted_fare_paisa, newCount), 0) +
-      farePaisaFor(r.distance_km, r.quoted_fare_paisa, newCount)
+      activeMembers.reduce((sum, m) => sum + farePaisaFor(m.distance_km, m.quoted_fare_paisa, m.bonus_paisa, newCount), 0) +
+      farePaisaFor(r.distance_km, r.quoted_fare_paisa, r.bonus_paisa, newCount)
 
     return toDriverRequestDTO(r, verdict, grossFarePaisa, joinRejectionMessage(verdict.reason))
   })

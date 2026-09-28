@@ -14,6 +14,8 @@ export interface PassengerRideDTO {
   status: string
   farePaisa: number
   quotedFarePaisa: number
+  /** What this passenger chose to add on top to attract a driver faster — already folded into quotedFarePaisa and farePaisa, broken out here for display. */
+  bonusPaisa: number
   finalFarePaisa: number | null
   pickupZone: { id: number; name: string }
   destinationZone: { id: number; name: string }
@@ -33,6 +35,8 @@ export interface PassengerRideDTO {
   /** True once the ride is DROPPED_OFF and no feedback has been given yet. */
   canGiveFeedback: boolean
   canCancel: boolean
+  /** Why the most recent CANCELLED transition happened — e.g. 'request_expired' when nobody answered in time. Null if never cancelled. */
+  cancelReason: string | null
   createdAt: string
 }
 
@@ -40,6 +44,9 @@ export interface PassengerRideDTO {
  * The fare a passenger sees right now. Recomputed from live pool membership on
  * every read rather than stored, so joining or cancelling updates it immediately.
  * Once the trip starts, final_fare_paisa is authoritative and nothing moves.
+ * quoted_fare_paisa already has this ride's own bonus folded in (see
+ * requestRide in ride.service.ts), so only the live-recompute branch needs to
+ * add it explicitly — the same split farePaisaFor uses on the driver side.
  */
 function effectiveFarePaisa(r: RideRow): number {
   if (r.final_fare_paisa !== null) return r.final_fare_paisa
@@ -47,7 +54,7 @@ function effectiveFarePaisa(r: RideRow): number {
   if (r.distance_km === null) return r.quoted_fare_paisa
 
   const activeBookings = r.shared_with + (ACTIVE_IN_POOL.has(r.status) ? 1 : 0)
-  return fareFor(r.distance_km, activeBookings)
+  return fareFor(r.distance_km, activeBookings) + r.bonus_paisa
 }
 
 export interface RideEventDTO {
@@ -95,6 +102,7 @@ export function toPassengerRideDTO(r: RideRow): PassengerRideDTO {
     status:           r.status,
     farePaisa:        effectiveFarePaisa(r),
     quotedFarePaisa:  r.quoted_fare_paisa,
+    bonusPaisa:       r.bonus_paisa,
     finalFarePaisa:   r.final_fare_paisa,
     pickupZone:       { id: r.pickup_zone_id,      name: r.pickup_zone_name      },
     destinationZone:  { id: r.destination_zone_id, name: r.destination_zone_name },
@@ -108,6 +116,7 @@ export function toPassengerRideDTO(r: RideRow): PassengerRideDTO {
     feedback:         r.feedback,
     canGiveFeedback:  r.status === 'DROPPED_OFF' && r.feedback === null,
     canCancel:        canTransition('ride', r.status, 'CANCELLED'),
+    cancelReason:     r.cancel_reason,
     createdAt:        r.created_at,
   }
 }

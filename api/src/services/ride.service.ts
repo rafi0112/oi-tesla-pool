@@ -1,12 +1,13 @@
 import { z } from 'zod'
 import { withTransaction } from '../db/pool'
 import { getDistance } from '../repositories/zone.repo'
-import { soloFare } from '../domain/fare'
+import { soloFare, FARE_POLICY } from '../domain/fare'
 import { POOL_POLICY } from '../domain/matching'
 import {
   findRideById,
   findRideByIdempotencyKey,
   findRidesByPassenger,
+  findActiveRideByPassenger,
   createRide,
   lockRideById,
   countActivePassengersInPool,
@@ -31,6 +32,10 @@ export const createRideSchema = z.object({
   // How long this passenger is willing to have a pool wait for more riders —
   // their own decision, never the driver's. 0 means "don't wait for anyone".
   waitMinutes:       z.number().int().min(0).max(POOL_POLICY.maxWaitMinutes).default(0),
+  // Extra the passenger offers on top of the normal fare to attract a driver
+  // faster — most useful once their last request has expired unanswered
+  // (see expireIfStale below), but available on any booking.
+  bonusPaisa:        z.number().int().min(0).max(FARE_POLICY.maxBonusPaisa).default(0),
   // Set when the passenger chose "Join this pool" from GET /pools/nearby
   // instead of booking independently.
   poolId:            z.string().uuid().optional(),
@@ -39,6 +44,29 @@ export const createRideSchema = z.object({
 export interface RequestRideResult {
   ride: PassengerRideDTO
   joinAttempt?: JoinAttempt
+}
+
+const REQUEST_EXPIRY_MS = POOL_POLICY.requestExpiryMinutes * 60_000
+
+/**
+ * A REQUESTED ride nobody has matched within POOL_POLICY.requestExpiryMinutes
+ * expires on its own — there's no scheduler in this project, so this runs the
+ * same self-healing way pool.service.ts's autoCloseIfExpired closes a pool's
+ * wait window: the next read or action against the ride does the closing.
+ * Re-checks status under the row lock, so a concurrent driver accept racing
+ * the expiry can't double-transition or throw. Returns true only if this call
+ * actually expired it, so a caller listing several rows can drop it from
+ * results without a second query.
+ */
+export async function expireIfStale(rideId: string, createdAt: string): Promise<boolean> {
+  if (Date.now() - new Date(createdAt).getTime() < REQUEST_EXPIRY_MS) return false
+
+  return withTransaction(async tx => {
+    const locked = await lockRideById(tx, rideId)
+    if (!locked || locked.status !== 'REQUESTED') return false
+    await transitionRide(tx, locked, 'CANCELLED', null, 'request_expired')
+    return true
+  })
 }
 
 export async function requestRide(
@@ -56,11 +84,18 @@ export async function requestRide(
     throw new ConflictError('VALIDATION_ERROR', 'Pickup and destination must differ')
   }
 
+  // Self-heals a stale unanswered request before trying to book a new one, so
+  // "request again after 15 minutes" always works immediately — the passenger
+  // never has to first open their ride list to free themselves up.
+  const active = await findActiveRideByPassenger(passengerId)
+  if (active) await expireIfStale(active.id, active.created_at)
+
   const distanceKm = await getDistance(data.pickupZoneId, data.destinationZoneId)
   if (distanceKm === null) throw new NotFoundError('No route between these zones')
 
-  // Booked alone so far, so the solo rate. Seats do not change the fare.
-  const quotedFarePaisa = soloFare(distanceKm)
+  // Booked alone so far, so the solo rate, plus whatever bonus this passenger
+  // chose to offer — quoted transparently up front, not added in later.
+  const quotedFarePaisa = soloFare(distanceKm) + data.bonusPaisa
 
   let ride
   try {
@@ -72,6 +107,7 @@ export async function requestRide(
         seats:             data.seats,
         waitMinutes:       data.waitMinutes,
         quotedFarePaisa,
+        bonusPaisa:        data.bonusPaisa,
         idempotencyKey,
       })
       // Booking from a zone is "being there" — the same signal a driver gives
@@ -100,7 +136,14 @@ export async function requestRide(
 
 export async function getMyRides(passengerId: string): Promise<PassengerRideDTO[]> {
   const rides = await findRidesByPassenger(passengerId)
-  return rides.map(toPassengerRideDTO)
+
+  let anyExpired = false
+  for (const r of rides) {
+    if (r.status === 'REQUESTED' && await expireIfStale(r.id, r.created_at)) anyExpired = true
+  }
+  const fresh = anyExpired ? await findRidesByPassenger(passengerId) : rides
+
+  return fresh.map(toPassengerRideDTO)
 }
 
 /**
@@ -160,8 +203,12 @@ export interface RideDetail {
 }
 
 export async function getRideById(id: string, passengerId: string): Promise<RideDetail> {
-  const ride = await findRideById(id, passengerId)
+  let ride = await findRideById(id, passengerId)
   if (!ride) throw new NotFoundError('Ride not found')
+
+  if (ride.status === 'REQUESTED' && await expireIfStale(ride.id, ride.created_at)) {
+    ride = (await findRideById(id, passengerId)) ?? ride
+  }
 
   const events = await findRideEvents(ride.id)
   return {

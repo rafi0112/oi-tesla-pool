@@ -494,9 +494,12 @@ export async function startTrip(driverId: string, poolId: string): Promise<Drive
 
     for (const member of boarding) {
       await transitionRide(tx, member, 'PICKED_UP', driverId)
+      // quoted_fare_paisa already has this member's own bonus folded in (see
+      // requestRide in ride.service.ts); the distance-known branch adds it
+      // explicitly, same split farePaisaFor uses everywhere else.
       const fare = member.distance_km === null
         ? member.quoted_fare_paisa
-        : fareFor(member.distance_km, boarding.length)
+        : fareFor(member.distance_km, boarding.length) + member.bonus_paisa
       await setFinalFare(tx, member.id, fare)
     }
   })

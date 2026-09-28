@@ -4,6 +4,12 @@ export const FARE_POLICY = {
   baseFarePaisa:       2000,
   perKmPaisa:          1000,
   poolDiscountPercent: 20,
+  // The most a passenger may add on top of their fare to attract a driver
+  // faster (see matching.ts's requestExpiryMinutes). A flat sanity cap, not a
+  // percentage of the trip — the same reasoning assumption 3 gives for the
+  // detour cap: a percentage would make it meaningless on a short hop and
+  // extortionate on a long one.
+  maxBonusPaisa:       5000,
 }
 
 export function soloFare(distanceKm: number): Paisa {
@@ -27,15 +33,19 @@ export function fareFor(distanceKm: number, activePassengerCount: number): Paisa
 }
 
 /**
- * A single booking's fare against a given number of bookings sharing the pool.
- * Falls back to the fare quoted at booking time when distance is unknown
- * (missing zone_distances row) — the same fallback the passenger's own fare
- * display uses, so the driver and passenger never see different numbers.
+ * A single booking's fare against a given number of bookings sharing the pool,
+ * plus whatever bonus that passenger offered to attract a driver. Falls back
+ * to the fare quoted at booking time when distance is unknown (missing
+ * zone_distances row) — quotedFarePaisa already has its own bonus baked in
+ * (see requestRide in ride.service.ts), so both branches end up meaning the
+ * same thing: solo/pooled fare plus bonus. Keeps the driver and passenger
+ * seeing the exact same number.
  */
 export function farePaisaFor(
   distanceKm: number | null,
   quotedFarePaisa: number,
+  bonusPaisa: number,
   activeCount: number,
 ): number {
-  return distanceKm === null ? quotedFarePaisa : fareFor(distanceKm, activeCount)
+  return distanceKm === null ? quotedFarePaisa : fareFor(distanceKm, activeCount) + bonusPaisa
 }

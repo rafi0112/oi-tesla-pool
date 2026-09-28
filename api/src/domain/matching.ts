@@ -8,6 +8,11 @@ export const POOL_POLICY = {
   // Upper sanity bound for a booking — the binding limit is the vehicle's own
   // seat_capacity, checked at pool creation and again on every join.
   maxSeatsPerBooking: 3,
+  // A REQUESTED ride nobody has matched within this long expires on its own —
+  // see ride.service.ts's expireIfStale. The passenger is then free to book
+  // again (assumption 7's one-active-ride limit no longer blocks them), this
+  // time optionally with a bonus (FARE_POLICY.maxBonusPaisa) to attract a driver.
+  requestExpiryMinutes: 15,
 }
 
 export interface Zone {

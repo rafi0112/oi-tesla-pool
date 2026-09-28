@@ -264,3 +264,44 @@ Each is implemented consistently throughout the codebase and seed data.
     is identical to the shape it had while active — passenger names, per-seat
     fares and all, since a driver (unlike a fellow passenger — see assumption
     17) has always been shown who they drove.
+
+20. **A REQUESTED ride nobody has matched within 15 minutes expires on its own,
+    the same self-healing way a pool's own wait window does.**
+    `POOL_POLICY.requestExpiryMinutes = 15` (`domain/matching.ts`). There is no
+    scheduler in this project (see the non-negotiable rules), so this can't run
+    on a timer — `ride.service.ts`'s `expireIfStale` runs the check inline,
+    exactly mirroring `pool.service.ts`'s `autoCloseIfExpired` (assumption 14):
+    the next read or action against the ride does the transitioning, under a
+    row lock so a concurrent driver accept racing the expiry can't double-fire.
+    It's wired into every place a REQUESTED ride is read — a single ride
+    (`GET /rides/:id`), the passenger's own list (`GET /rides/mine`), and the
+    driver's request feed (`GET /drivers/requests`, scoped to the zone being
+    queried) — plus `requestRide` itself, which self-heals the passenger's own
+    stale request *before* attempting a new booking, so "request again after
+    15 minutes" works immediately without the passenger first having to open
+    their ride list to free up `one_active_ride_per_passenger`. The expiry is
+    recorded as an ordinary `CANCELLED` transition with `reason:
+    'request_expired'`, surfaced to the frontend as `cancelReason` so it can
+    say "expired" rather than "cancelled".
+
+21. **A passenger may offer a bonus on top of their fare to attract a driver
+    faster — capped, transparent, and folded into every fare figure everyone
+    already sees, never a separate number to reconcile.**
+    `ride_requests.bonus_paisa` (migration `006_request_expiry_and_bonus.sql`),
+    capped at `FARE_POLICY.maxBonusPaisa` (a flat sanity bound, not a
+    percentage — the same reasoning assumption 3 gives for the detour cap).
+    `quoted_fare_paisa` is set to `soloFare(distanceKm) + bonusPaisa` at
+    booking time, so the passenger's own upfront quote already reflects it
+    honestly; the live-recompute path (`effectiveFarePaisa` in
+    `passenger.dto.ts`) and the driver-facing projection (`farePaisaFor` in
+    `domain/fare.ts`, now taking `bonusPaisa` as a parameter) both add it back
+    on top of the solo/pooled formula, so a boosted request's fare agrees
+    everywhere — the passenger's own view, every driver's request-feed
+    preview, and the amount locked into `final_fare_paisa` at boarding.
+    `GET /drivers/requests` orders by `bonus_paisa DESC` before `created_at
+    DESC`, so a boosted request actually surfaces first in every driver's feed
+    in that zone — the literal mechanism by which it "attracts a driver
+    faster", not just a number shown alongside an unchanged list. The bonus
+    stays available on any booking, not gated behind a prior expiry, but the
+    booking form nudges it by default right after the passenger's last request
+    timed out.

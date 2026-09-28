@@ -39,6 +39,7 @@ export interface PoolMemberRow {
   destination_zone_id: number
   destination_zone_name: string
   quoted_fare_paisa: number
+  bonus_paisa: number
   final_fare_paisa: number | null
   distance_km: number | null
 }
@@ -131,6 +132,7 @@ export async function findPoolMembers(poolId: string): Promise<PoolMemberRow[]> 
             r.destination_zone_id,
             dz.name         AS destination_zone_name,
             r.quoted_fare_paisa,
+            r.bonus_paisa,
             r.final_fare_paisa,
             zd.distance_km
      FROM   ride_requests r

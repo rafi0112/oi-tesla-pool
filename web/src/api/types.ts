@@ -1,5 +1,7 @@
 export type Role = 'PASSENGER' | 'DRIVER'
 
+export type Gender = 'MALE' | 'FEMALE' | 'OTHER'
+
 export type RideStatus =
   | 'REQUESTED' | 'MATCHED' | 'PICKED_UP' | 'DROPPED_OFF' | 'CANCELLED'
 
@@ -11,6 +13,7 @@ export interface User {
   name: string
   email: string
   role: Role
+  gender: Gender
 }
 
 export interface Zone {
@@ -31,6 +34,11 @@ export interface Quote {
   pooledFarePaisa: number
 }
 
+export interface SharedRider {
+  name: string
+  gender: Gender
+}
+
 export interface PassengerRide {
   id: string
   status: RideStatus
@@ -43,6 +51,8 @@ export interface PassengerRide {
   poolId: string | null
   driver: { name: string; vehicle: string } | null
   sharedWith: number
+  /** Name and gender of everyone else who shared this ride's pool — the ride's history record. */
+  sharedRiders: SharedRider[]
   canCancel: boolean
   createdAt: string
 }
@@ -125,6 +135,8 @@ export interface PoolOption {
   seatsAvailable: number
   seatCapacity: number
   windowClosesInSeconds: number
+  /** Gender of each passenger already aboard, one entry per current member — never their name. */
+  memberGenders: Gender[]
   joinable: boolean
   reason?: string
 }

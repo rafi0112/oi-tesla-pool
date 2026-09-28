@@ -3,6 +3,7 @@ import { ApiError, api } from '../api/client'
 import type { JoinAttempt, PassengerRide, PoolOption, RideStatus, Zone } from '../api/types'
 import { useAuth } from '../context/AuthContext'
 import { AppHeader, Avatar } from '../components/Chrome'
+import { GenderTag } from '../components/GenderTag'
 import { RouteRadar } from '../components/RouteRadar'
 import { SeatPips } from '../components/SeatPips'
 import { StatusTrack } from '../components/StatusTrack'
@@ -410,8 +411,15 @@ function NearbyPools({
           }`}
         >
           <span className="min-w-0">
-            <span className="block truncate text-sm font-semibold text-ink">
-              {firstName(p.driverName)}’s {p.vehicleName}
+            <span className="flex items-center gap-1.5">
+              <span className="block truncate text-sm font-semibold text-ink">
+                {firstName(p.driverName)}’s {p.vehicleName}
+              </span>
+              {p.memberGenders.length > 0 && (
+                <span className="flex shrink-0 items-center gap-1" title="Already aboard">
+                  {p.memberGenders.map((g, i) => <GenderTag key={i} gender={g} />)}
+                </span>
+              )}
             </span>
             <span className="block truncate text-xs text-ink-3">
               {p.joinable
@@ -547,9 +555,14 @@ function RideTicket({
             )}
           </Detail>
           <Detail label="Sharing">
-            {current.sharedWith > 0 ? (
-              <span className="font-bold text-ink">
-                Shared with {plural(current.sharedWith, 'other passenger')}
+            {current.sharedRiders.length > 0 ? (
+              <span className="flex flex-wrap items-center gap-1.5">
+                {current.sharedRiders.map(r => (
+                  <span key={r.name} className="inline-flex items-center gap-1 rounded-md bg-surface-2 px-1.5 py-0.5">
+                    <span className="font-bold text-ink">{firstName(r.name)}</span>
+                    <GenderTag gender={r.gender} />
+                  </span>
+                ))}
               </span>
             ) : (
               <span className="text-ink-3">Just you so far</span>
@@ -755,6 +768,17 @@ function PastRides({ rides, loading }: { rides: PassengerRide[]; loading: boolea
                     </p>
                   </div>
                 </div>
+                {r.sharedRiders.length > 0 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-line/70 pt-2">
+                    <span className="eyebrow !text-[0.6rem]">Shared with</span>
+                    {r.sharedRiders.map(rider => (
+                      <span key={rider.name} className="inline-flex items-center gap-1 rounded-md bg-surface-2 px-1.5 py-0.5">
+                        <span className="text-xs font-semibold text-ink">{firstName(rider.name)}</span>
+                        <GenderTag gender={rider.gender} />
+                      </span>
+                    ))}
+                  </div>
+                )}
               </li>
             )
           })}

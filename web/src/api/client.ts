@@ -87,6 +87,13 @@ function parseJson(text: string): unknown {
 export const api = {
   login: (email: string, password: string) =>
     request<{ token: string; user: User }>('/auth/login', { method: 'POST', body: { email, password } }),
+  register: (body: {
+    name: string; email: string; password: string
+    role: 'PASSENGER' | 'DRIVER'; gender: 'MALE' | 'FEMALE' | 'OTHER'
+    // Required only when role is 'DRIVER' — a passenger never sends these.
+    vehicleName?: string; seatCapacity?: number
+  }) =>
+    request<{ token: string; user: User }>('/auth/register', { method: 'POST', body }),
   me: () => request<{ user: User }>('/auth/me'),
 
   zones: () => request<{ zones: Zone[] }>('/zones'),
@@ -112,6 +119,9 @@ export const api = {
   cancelRide: (id: string) => request<{ ride: PassengerRide }>(`/rides/${id}/cancel`, { method: 'POST' }),
   submitFeedback: (id: string, body: { rating: number; comment?: string }) =>
     request<{ ride: PassengerRide }>(`/rides/${id}/feedback`, { method: 'POST', body }),
+  /** Halves whatever time is left on the pool's wait window — any current member may call this. */
+  applyUrgency: (poolId: string) =>
+    request<{ poolWaitUntil: string }>(`/pools/${poolId}/urgent`, { method: 'POST' }),
 
   passengerProfile: () => request<{ passenger: PassengerProfile }>('/passengers/me'),
   setPassengerLocation: (zoneId: number) =>

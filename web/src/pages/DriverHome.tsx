@@ -6,6 +6,7 @@ import { AppHeader, Avatar } from '../components/Chrome'
 import { RouteRadar, type RadarMember, type RadarProposal } from '../components/RouteRadar'
 import { SeatPips, type SeatOccupant } from '../components/SeatPips'
 import { StatusTrack } from '../components/StatusTrack'
+import { WindowTimer } from '../components/WindowTimer'
 import { EmptyState, ErrorState, LoadingState, Notice, Skeleton, Spinner, StaleBadge } from '../components/States'
 import { riderColor } from '../components/riderColors'
 import { POLL_MS, useNow, useResource } from '../lib/useResource'
@@ -394,22 +395,6 @@ function ActivePool({
  * asked for the shortest wait sets this clock, and it only ever moves earlier
  * as more people with less patience join. See docs/ASSUMPTIONS.md #13.
  */
-function WindowTimer({ waitUntil, now }: { waitUntil: string; now: number }) {
-  const left = Math.max(0, new Date(waitUntil).getTime() - now)
-  const mins = Math.floor(left / 60_000)
-  const secs = Math.floor((left % 60_000) / 1000)
-  const expired = left === 0
-
-  return (
-    <span
-      className={`font-mono text-sm font-bold ${expired ? 'text-ink-3' : 'text-marigold'}`}
-      title="Set by whichever current passenger chose the shortest wait"
-    >
-      {expired ? 'window closed' : `${mins}:${String(secs).padStart(2, '0')} to join`}
-    </span>
-  )
-}
-
 function StatusBadge({ status }: { status: PoolStatus }) {
   const live = status === 'FORMING' || status === 'EN_ROUTE'
   return (

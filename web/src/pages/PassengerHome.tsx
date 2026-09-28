@@ -8,10 +8,11 @@ import { RouteRadar } from '../components/RouteRadar'
 import { SeatPips } from '../components/SeatPips'
 import { StarDisplay, StarPicker } from '../components/StarRating'
 import { StatusTrack } from '../components/StatusTrack'
+import { WindowTimer } from '../components/WindowTimer'
 import {
   EmptyState, ErrorState, Notice, Skeleton, Spinner, StaleBadge,
 } from '../components/States'
-import { POLL_MS, useResource } from '../lib/useResource'
+import { POLL_MS, useNow, useResource } from '../lib/useResource'
 import { bearingDeg, compassPoint } from '../lib/geo'
 import {
   clockTime, firstName, formatTaka, plural, RIDE_STATUS_LABEL, shortDate,
@@ -623,6 +624,10 @@ function RideTicket({
             </span>
           </Detail>
         </div>
+
+        {current.poolWaitUntil && current.poolId && (
+          <PoolWindowBanner poolId={current.poolId} waitUntil={current.poolWaitUntil} onChanged={detail.reload} />
+        )}
       </div>
 
       <div className="perforation" aria-hidden />
@@ -670,6 +675,58 @@ function RideTicket({
         <CancelButton ride={current} onCancelled={onChanged} />
       </div>
     </article>
+  )
+}
+
+/**
+ * The pool's own wait countdown, plus the "urgent" button — any current
+ * member may press it, not just whoever set the original wait time. Halves
+ * whatever's left; every other member and the driver see the shorter timer
+ * the moment they next poll, since it's the one pool row they all read.
+ */
+function PoolWindowBanner({
+  poolId, waitUntil, onChanged,
+}: { poolId: string; waitUntil: string; onChanged: () => Promise<void> }) {
+  const now = useNow(1000)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const expired = new Date(waitUntil).getTime() <= now
+
+  async function urgent() {
+    setBusy(true)
+    setError(null)
+    try {
+      await api.applyUrgency(poolId)
+      await onChanged()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not reduce the timer')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (expired) return null
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-marigold/30 bg-marigold-soft px-4 py-3">
+      <div>
+        <p className="eyebrow !text-marigold-ink">Pool window</p>
+        <p className="mt-0.5"><WindowTimer waitUntil={waitUntil} now={now} /></p>
+      </div>
+      <div className="text-right">
+        <button
+          type="button"
+          onClick={() => void urgent()}
+          disabled={busy}
+          className="btn-ghost !py-2 text-sm"
+          title="Halves however much time is currently left"
+        >
+          {busy && <Spinner />}
+          {busy ? 'Reducing' : 'In a hurry? Halve the timer'}
+        </button>
+        {error && <p className="mt-1.5 text-xs text-alert">{error}</p>}
+      </div>
+    </div>
   )
 }
 

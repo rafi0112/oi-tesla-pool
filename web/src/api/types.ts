@@ -56,6 +56,8 @@ export interface PassengerRide {
   sharedWith: number
   /** Gender of everyone else who shared this ride's pool — never their name. */
   sharedGenders: Gender[]
+  /** The pool's live wait deadline — null once it's no longer accepting joins. Shared by every current member and the driver. */
+  poolWaitUntil: string | null
   /** Set once this passenger has rated the ride — only possible after DROPPED_OFF. */
   feedback: Feedback | null
   /** True once the ride is DROPPED_OFF and no feedback has been given yet. */

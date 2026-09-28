@@ -260,25 +260,33 @@ export async function halveWaitUntil(tx: PoolClient, poolId: string): Promise<st
   return rows[0]?.wait_until ?? null
 }
 
+export interface SeatClaim {
+  seatsAvailable: number
+  status: string
+}
+
 /**
  * The atomic seat claim. One conditional UPDATE — never read-then-write.
- * Returns false when the seats were already taken or the pool closed, which the
- * caller translates into POOL_FULL.
+ * Returns null when the seats were already taken or the pool closed, which
+ * the caller translates into POOL_FULL. Returns the pool's status and its
+ * seats_available *after* this claim — the caller uses that to notice a pool
+ * has just gone from having room to being full, without a second query.
  */
 export async function claimSeats(
   tx: PoolClient,
   poolId: string,
   seats: number,
-): Promise<boolean> {
-  const { rowCount } = await tx.query(
+): Promise<SeatClaim | null> {
+  const { rows } = await tx.query<{ seats_available: number; status: string }>(
     `UPDATE pools
         SET seats_available = seats_available - $2
       WHERE id = $1
         AND seats_available >= $2
-        AND status IN ('FORMING','ACCEPTED')`,
+        AND status IN ('FORMING','ACCEPTED')
+      RETURNING seats_available, status`,
     [poolId, seats],
   )
-  return rowCount === 1
+  return rows[0] ? { seatsAvailable: rows[0].seats_available, status: rows[0].status } : null
 }
 
 /** Mirrored release on cancellation, guarded so it can never exceed capacity. */

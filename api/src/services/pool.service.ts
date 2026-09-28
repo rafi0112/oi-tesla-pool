@@ -153,9 +153,13 @@ export async function createPool(
   }
 
   // The deciding vote is the passenger's own, cast at booking time — the
-  // driver accepting the request no longer chooses whether it waits.
-  const status = ride.wait_minutes > 0 ? 'FORMING' : 'ACCEPTED'
-  const waitUntil = ride.wait_minutes > 0
+  // driver accepting the request no longer chooses whether it waits. But a
+  // booking that alone fills the vehicle leaves no seat for anyone to wait
+  // for, whatever they asked for — same "full closes the window itself"
+  // rule runAtomicJoin applies when the last seat goes during a later join.
+  const seatsAvailable = vehicle.seat_capacity - ride.seats
+  const status = seatsAvailable > 0 && ride.wait_minutes > 0 ? 'FORMING' : 'ACCEPTED'
+  const waitUntil = status === 'FORMING'
     ? new Date(Date.now() + ride.wait_minutes * 60_000)
     : null
 
@@ -165,7 +169,7 @@ export async function createPool(
       const id = await insertPool(tx, {
         vehicleId:      vehicle.id,
         originZoneId:   ride.pickup_zone_id,
-        seatsAvailable: vehicle.seat_capacity - ride.seats,
+        seatsAvailable,
         status,
         waitUntil,
       })
@@ -229,6 +233,16 @@ async function runAtomicJoin(actorId: string, poolId: string, rideId: string): P
     // nor shortens the window; it simply doesn't speak to the question.
     if (locked.wait_minutes > 0) {
       await ratchetWaitUntil(tx, poolId, new Date(Date.now() + locked.wait_minutes * 60_000))
+    }
+
+    // Full is full: with no seats left nobody else could join anyway, so the
+    // window closes itself the instant the last seat goes — same outcome as
+    // the driver pressing "close pool" or the clock running out, just
+    // triggered by capacity instead of choice or time. actorUserId is null:
+    // nobody clicked anything, same convention autoCloseIfExpired uses.
+    if (claimed.seatsAvailable === 0 && claimed.status === 'FORMING') {
+      await transitionPool(tx, { id: poolId, status: 'FORMING' }, 'ACCEPTED', null, 'pool_full')
+      await clearWaitUntil(tx, poolId)
     }
   })
 }

@@ -361,3 +361,24 @@ Each is implemented consistently throughout the codebase and seed data.
     consoles share. Gender-only visibility before joining a pool (assumption
     17, `PoolOptionDTO.memberGenders`) was already in place and needed no
     change for this feature.
+
+25. **A full pool closes its own wait window the instant the last seat goes —
+    same outcome as the driver pressing "close pool" or the clock running
+    out, just triggered by capacity instead of choice or time.**
+    `claimSeats` (`pool.repo.ts`) now returns the pool's `seats_available` and
+    `status` *after* the atomic claim, in the same `UPDATE ... RETURNING` — no
+    second query. `runAtomicJoin` (`pool.service.ts`, shared by both the
+    driver's explicit accept/join and a passenger's self-join, so this covers
+    both paths from one place) checks that result: if the claim just brought
+    `seats_available` to `0` and the pool was still `FORMING`, it transitions
+    straight to `ACCEPTED` and clears `wait_until`, actor `null` since nobody
+    clicked anything — the same convention `autoCloseIfExpired` (assumption
+    14) uses for a timed-out window. `createPool` gets the mirror case: a
+    single opening booking that alone fills the vehicle (`seats` equal to
+    `seat_capacity`) starts the pool `ACCEPTED` from the very first moment,
+    never `FORMING`, regardless of that passenger's own `wait_minutes` —
+    there is no seat left for anyone to wait for, so asking would be a lie.
+    Both the driver console and the passenger's own `PoolWindowBanner`
+    (assumption 24) already hide their timer whenever the pool isn't
+    `FORMING`, so neither needed a code change to reflect this — the timer
+    simply isn't there any more once the next poll sees the new status.

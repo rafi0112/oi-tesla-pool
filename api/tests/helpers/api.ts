@@ -102,6 +102,9 @@ export const dropoffReq = (token: string, poolId: string, rideId: string) =>
 export const cancelRideReq = (token: string, rideId: string) =>
   api().post(`/rides/${rideId}/cancel`).set('Authorization', `Bearer ${token}`)
 
+export const submitFeedbackReq = (token: string, rideId: string, body: { rating: number; comment?: string }) =>
+  api().post(`/rides/${rideId}/feedback`).set('Authorization', `Bearer ${token}`).send(body)
+
 export const getRideReq = (token: string, rideId: string) =>
   api().get(`/rides/${rideId}`).set('Authorization', `Bearer ${token}`)
 

@@ -110,6 +110,8 @@ export const api = {
       headers: { 'Idempotency-Key': idempotencyKey },
     }),
   cancelRide: (id: string) => request<{ ride: PassengerRide }>(`/rides/${id}/cancel`, { method: 'POST' }),
+  submitFeedback: (id: string, body: { rating: number; comment?: string }) =>
+    request<{ ride: PassengerRide }>(`/rides/${id}/feedback`, { method: 'POST', body }),
 
   passengerProfile: () => request<{ passenger: PassengerProfile }>('/passengers/me'),
   setPassengerLocation: (zoneId: number) =>

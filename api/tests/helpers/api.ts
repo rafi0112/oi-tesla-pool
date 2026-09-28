@@ -93,6 +93,7 @@ export const closePoolReq  = (t: string, p: string) => poolAction(t, p, 'close')
 export const arriveReq     = (t: string, p: string) => poolAction(t, p, 'arrive')
 export const startReq      = (t: string, p: string) => poolAction(t, p, 'start')
 export const completeReq   = (t: string, p: string) => poolAction(t, p, 'complete')
+export const urgentReq     = (t: string, p: string) => poolAction(t, p, 'urgent')
 
 export const dropoffReq = (token: string, poolId: string, rideId: string) =>
   api()

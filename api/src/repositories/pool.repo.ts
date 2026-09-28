@@ -35,6 +35,13 @@ export interface PoolMemberRow {
   pickup_zone_name: string
   destination_zone_id: number
   destination_zone_name: string
+  quoted_fare_paisa: number
+  final_fare_paisa: number | null
+  distance_km: number | null
+}
+
+interface RawPoolMemberRow extends Omit<PoolMemberRow, 'distance_km'> {
+  distance_km: string | null
 }
 
 const SELECT_POOL = `
@@ -95,7 +102,7 @@ export async function findFormingPoolsByOriginZone(zoneId: number): Promise<Pool
 }
 
 export async function findPoolMembers(poolId: string): Promise<PoolMemberRow[]> {
-  const { rows } = await db.query<PoolMemberRow>(
+  const { rows } = await db.query<RawPoolMemberRow>(
     `SELECT r.id            AS ride_id,
             u.name          AS passenger_name,
             r.seats,
@@ -103,17 +110,23 @@ export async function findPoolMembers(poolId: string): Promise<PoolMemberRow[]> 
             r.pickup_zone_id,
             pz.name         AS pickup_zone_name,
             r.destination_zone_id,
-            dz.name         AS destination_zone_name
+            dz.name         AS destination_zone_name,
+            r.quoted_fare_paisa,
+            r.final_fare_paisa,
+            zd.distance_km
      FROM   ride_requests r
      JOIN   users u  ON u.id  = r.passenger_id
      JOIN   zones pz ON pz.id = r.pickup_zone_id
      JOIN   zones dz ON dz.id = r.destination_zone_id
+     LEFT JOIN zone_distances zd
+            ON zd.from_zone_id = r.pickup_zone_id
+           AND zd.to_zone_id   = r.destination_zone_id
      WHERE  r.pool_id = $1
        AND  r.status IN ('MATCHED','PICKED_UP','DROPPED_OFF')
      ORDER  BY r.created_at`,
     [poolId],
   )
-  return rows
+  return rows.map(r => ({ ...r, distance_km: r.distance_km === null ? null : Number(r.distance_km) }))
 }
 
 export async function createPool(

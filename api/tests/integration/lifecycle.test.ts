@@ -6,7 +6,7 @@ import {
 import {
   tokenFor, goOnline, bookRide, openPool, joinPool,
   closePoolReq, arriveReq, startReq, completeReq, dropoffReq,
-  getRideReq, activePoolReq, expectStatus,
+  getRideReq, activePoolReq, requestFeedReq, driverProfileReq, expectStatus,
 } from '../helpers/api'
 
 let world: TestWorld
@@ -276,6 +276,59 @@ describe('passenger-chosen wait time', () => {
   })
 })
 
+describe('the driver can see what a request or pool pays', () => {
+  it('shows the solo fare on a request feed row when the driver has no pool yet', async () => {
+    const jashim = await tokenFor('Jashim Uddin')
+    await goOnline(jashim, banani)
+    const nusrat = await tokenFor('Nusrat Jahan')
+
+    await bookRide(nusrat, { pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1 })
+
+    const feed = expectStatus(await requestFeedReq(jashim), 200)
+    expect(feed.body.requests).toHaveLength(1)
+    expect(feed.body.requests[0].grossFarePaisa).toBe(5000) // solo fare, Banani→Mohakhali
+  })
+
+  it('re-prices the whole pool at the shared rate once a second request could join', async () => {
+    const jashim = await tokenFor('Jashim Uddin')
+    await goOnline(jashim, banani)
+    const nusrat = await tokenFor('Nusrat Jahan')
+    const rafiq  = await tokenFor('Rafiq Hasan')
+
+    const nusratRide = await bookRide(nusrat, {
+      pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1, waitMinutes: 5,
+    })
+    const pool = await openPool(jashim, nusratRide.id)
+    expect(pool.grossFarePaisa).toBe(5000) // just Nusrat, still solo-priced
+
+    await bookRide(rafiq, { pickupZoneId: banani, destinationZoneId: gulshan, seats: 1 })
+
+    const feed = expectStatus(await requestFeedReq(jashim), 200)
+    expect(feed.body.requests).toHaveLength(1)
+    // Nusrat re-priced to 4000 plus Rafiq's own pooled fare of 4800.
+    expect(feed.body.requests[0].grossFarePaisa).toBe(4000 + 4800)
+  })
+
+  it('accumulates completed fares into the driver\'s lifetime total', async () => {
+    const jashim = await tokenFor('Jashim Uddin')
+    await goOnline(jashim, banani)
+    const nusrat = await tokenFor('Nusrat Jahan')
+
+    const before = expectStatus(await driverProfileReq(jashim), 200)
+    expect(before.body.driver.totalEarningsPaisa).toBe(0)
+
+    const ride = await bookRide(nusrat, { pickupZoneId: banani, destinationZoneId: mohakhali, seats: 1 })
+    const pool = await openPool(jashim, ride.id)
+    await arriveReq(jashim, pool.id)
+    await startReq(jashim, pool.id)
+    await dropoffReq(jashim, pool.id, ride.id)
+    await completeReq(jashim, pool.id)
+
+    const after = expectStatus(await driverProfileReq(jashim), 200)
+    expect(after.body.driver.totalEarningsPaisa).toBe(5000)
+  })
+})
+
 describe('active pool', () => {
   it('is null before the driver accepts anyone', async () => {
     const jashim = await tokenFor('Jashim Uddin')
@@ -284,7 +337,7 @@ describe('active pool', () => {
     expect(res.body.pool).toBeNull()
   })
 
-  it('lists the passengers without any fare', async () => {
+  it('lists the passengers along with the pool\'s gross fare', async () => {
     const jashim = await tokenFor('Jashim Uddin')
     await goOnline(jashim, banani)
     const nusrat = await tokenFor('Nusrat Jahan')
@@ -297,7 +350,8 @@ describe('active pool', () => {
     const res = expectStatus(await activePoolReq(jashim), 200)
     expect(res.body.pool.passengers).toHaveLength(1)
     expect(res.body.pool.passengers[0].name).toBe('Nusrat Jahan')
-    expect(JSON.stringify(res.body.pool)).not.toMatch(/paisa|fare/i)
+    expect(res.body.pool.passengers[0].farePaisa).toBeGreaterThan(0)
+    expect(res.body.pool.grossFarePaisa).toBe(res.body.pool.passengers[0].farePaisa)
   })
 })
 

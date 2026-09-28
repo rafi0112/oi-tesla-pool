@@ -114,6 +114,9 @@ export const activePoolReq = (token: string) =>
 export const requestFeedReq = (token: string) =>
   api().get('/drivers/requests').set('Authorization', `Bearer ${token}`)
 
+export const driverProfileReq = (token: string) =>
+  api().get('/drivers/me').set('Authorization', `Bearer ${token}`)
+
 export const passengerProfileReq = (token: string) =>
   api().get('/passengers/me').set('Authorization', `Bearer ${token}`)
 

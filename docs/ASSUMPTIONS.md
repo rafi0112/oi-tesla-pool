@@ -188,3 +188,22 @@ Each is implemented consistently throughout the codebase and seed data.
     just read by a different service layer for a different purpose. The two
     interpretations can't collide because a passenger's row is never read through
     `driver.service.ts` and a driver's is never read through `passenger.service.ts`.
+
+16. **The driver now sees every fare — this reverses the MVP's original secrecy rule.**
+    Earlier revisions deliberately withheld fare numbers from `DriverRequestDTO` and
+    `DriverPoolDTO` on the theory that a driver shouldn't see what a passenger pays.
+    That rule is gone: `GET /drivers/requests` now carries `grossFarePaisa` per open
+    request — the passenger's own solo fare if the driver has no active pool yet
+    (accepting opens a fresh one), or the whole pool's new total if the driver already
+    has one (every current member plus the candidate, all re-priced at the bigger
+    shared-ride discount) — so a driver knows what accepting is worth *before* they
+    accept, not after. `GET /pools/active` similarly carries `grossFarePaisa` on the
+    pool and `farePaisa` on each passenger. `GET /drivers/me` gains
+    `totalEarningsPaisa`, the lifetime sum of `final_fare_paisa` across every ride
+    this driver has taken all the way to `DROPPED_OFF` — a fare only ever counts once
+    it's locked in at boarding, so a cancelled or still-forming ride never inflates it.
+    The projection formula (`farePaisaFor` in `src/domain/fare.ts`) is the same
+    solo/pooled pricing a passenger's own fare uses, just evaluated at a hypothetical
+    member count before the driver commits — so the number a driver sees while
+    deciding and the number the passenger is actually charged after accepting always
+    agree.

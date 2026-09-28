@@ -182,12 +182,18 @@ export interface OpenRequestRow {
   pickup_zone_name: string
   destination_zone_id: number
   destination_zone_name: string
+  quoted_fare_paisa: number
+  distance_km: number | null
   created_at: string
+}
+
+interface RawOpenRequestRow extends Omit<OpenRequestRow, 'distance_km'> {
+  distance_km: string | null
 }
 
 /** Served by the open_requests_by_zone partial index. */
 export async function findOpenRequestsInZone(zoneId: number): Promise<OpenRequestRow[]> {
-  const { rows } = await db.query<OpenRequestRow>(
+  const { rows } = await db.query<RawOpenRequestRow>(
     `SELECT r.id,
             u.name  AS passenger_name,
             r.seats,
@@ -196,17 +202,36 @@ export async function findOpenRequestsInZone(zoneId: number): Promise<OpenReques
             pz.name AS pickup_zone_name,
             r.destination_zone_id,
             dz.name AS destination_zone_name,
+            r.quoted_fare_paisa,
+            zd.distance_km,
             r.created_at
      FROM   ride_requests r
      JOIN   users u  ON u.id  = r.passenger_id
      JOIN   zones pz ON pz.id = r.pickup_zone_id
      JOIN   zones dz ON dz.id = r.destination_zone_id
+     LEFT JOIN zone_distances zd
+            ON zd.from_zone_id = r.pickup_zone_id
+           AND zd.to_zone_id   = r.destination_zone_id
      WHERE  r.status = 'REQUESTED'
        AND  r.pickup_zone_id = $1
      ORDER  BY r.created_at DESC`,
     [zoneId],
   )
-  return rows
+  return rows.map(r => ({ ...r, distance_km: r.distance_km === null ? null : Number(r.distance_km) }))
+}
+
+/** Every fare permanently earned by this driver — summed once a ride is fully dropped off. */
+export async function sumDriverEarnings(driverId: string): Promise<number> {
+  const { rows } = await db.query<{ total: string | null }>(
+    `SELECT COALESCE(SUM(r.final_fare_paisa), 0) AS total
+     FROM   ride_requests r
+     JOIN   pools    p ON p.id = r.pool_id
+     JOIN   vehicles v ON v.id = p.vehicle_id
+     WHERE  v.driver_id = $1
+       AND  r.status = 'DROPPED_OFF'`,
+    [driverId],
+  )
+  return Number(rows[0].total)
 }
 
 export interface BoardingMemberRow {

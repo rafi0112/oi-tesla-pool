@@ -25,3 +25,17 @@ export function pooledFare(distanceKm: number): Paisa {
 export function fareFor(distanceKm: number, activePassengerCount: number): Paisa {
   return activePassengerCount >= 2 ? pooledFare(distanceKm) : soloFare(distanceKm)
 }
+
+/**
+ * A single booking's fare against a given number of bookings sharing the pool.
+ * Falls back to the fare quoted at booking time when distance is unknown
+ * (missing zone_distances row) — the same fallback the passenger's own fare
+ * display uses, so the driver and passenger never see different numbers.
+ */
+export function farePaisaFor(
+  distanceKm: number | null,
+  quotedFarePaisa: number,
+  activeCount: number,
+): number {
+  return distanceKm === null ? quotedFarePaisa : fareFor(distanceKm, activeCount)
+}

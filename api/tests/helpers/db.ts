@@ -150,6 +150,14 @@ export async function poolWaitUntil(poolId: string): Promise<string | null> {
   return rows[0].wait_until
 }
 
+/** Backdates a ride request's created_at past the 15-minute expiry window, so tests don't wait for real minutes to pass. */
+export async function backdateRideRequest(rideId: string): Promise<void> {
+  await db.query(
+    `UPDATE ride_requests SET created_at = now() - interval '16 minutes' WHERE id = $1`,
+    [rideId],
+  )
+}
+
 export async function poolEventReasons(poolId: string): Promise<string[]> {
   const { rows } = await db.query<{ to_status: string; reason: string | null }>(
     `SELECT to_status, reason FROM pool_status_events

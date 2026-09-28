@@ -29,7 +29,7 @@ export async function goOnline(driverToken: string, zoneId: number) {
 
 export async function bookRide(
   passengerToken: string,
-  body: { pickupZoneId: number; destinationZoneId: number; seats: number; waitMinutes?: number },
+  body: { pickupZoneId: number; destinationZoneId: number; seats: number; waitMinutes?: number; bonusPaisa?: number },
 ) {
   const res = await api()
     .post('/rides')

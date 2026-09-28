@@ -20,7 +20,7 @@ if (!TARGET.endsWith('_test')) {
 /** Wipes every table. Safe: the guard above proves this is the test database. */
 export async function truncateAll(): Promise<void> {
   await db.query(`
-    TRUNCATE ride_status_events, pool_status_events, ride_requests, pools,
+    TRUNCATE ride_feedback, ride_status_events, pool_status_events, ride_requests, pools,
              zone_distances, vehicles, users, zones
     RESTART IDENTITY CASCADE
   `)

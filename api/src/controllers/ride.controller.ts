@@ -6,10 +6,11 @@ import { POOL_POLICY } from '../domain/matching'
 import { NotFoundError } from '../errors'
 import {
   requestRide, getMyRides, getRideById, cancelRide, createRideSchema,
+  submitFeedback, submitFeedbackSchema,
 } from '../services/ride.service'
 import { AuthedRequest } from './auth.controller'
 
-export { createRideSchema }
+export { createRideSchema, submitFeedbackSchema }
 
 export const quoteSchema = z.object({
   pickupZoneId:      z.number().int().positive(),
@@ -50,6 +51,19 @@ export async function cancelRideHandler(req: Request, res: Response, next: NextF
   try {
     const ride = await cancelRide((req as AuthedRequest).user.id, req.params.id)
     res.json({ ride })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function submitFeedbackHandler(req: Request, res: Response, next: NextFunction) {
+  try {
+    const ride = await submitFeedback(
+      (req as AuthedRequest).user.id,
+      req.params.id,
+      req.body as z.infer<typeof submitFeedbackSchema>,
+    )
+    res.status(201).json({ ride })
   } catch (err) {
     next(err)
   }

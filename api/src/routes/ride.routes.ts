@@ -4,6 +4,7 @@ import {
   quoteSchema, quoteHandler,
   createRideSchema, createRideHandler,
   getMyRidesHandler, getRideByIdHandler, cancelRideHandler,
+  submitFeedbackSchema, submitFeedbackHandler,
 } from '../controllers/ride.controller'
 import { getAllZones } from '../repositories/zone.repo'
 import { toZoneDTO } from '../dto/zone.dto'
@@ -28,5 +29,9 @@ router.post('/rides',       authenticate, requireRole('PASSENGER'), validate(cre
 router.get('/rides/mine',   authenticate, requireRole('PASSENGER'), getMyRidesHandler)
 router.get('/rides/:id',    authenticate, requireRole('PASSENGER'), getRideByIdHandler)
 router.post('/rides/:id/cancel', authenticate, requireRole('PASSENGER'), cancelRideHandler)
+router.post(
+  '/rides/:id/feedback', authenticate, requireRole('PASSENGER'),
+  validate(submitFeedbackSchema), submitFeedbackHandler,
+)
 
 export default router

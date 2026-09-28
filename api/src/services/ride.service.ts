@@ -14,6 +14,7 @@ import {
 } from '../repositories/ride.repo'
 import { lockPoolById, releaseSeats } from '../repositories/pool.repo'
 import { updateUserZone } from '../repositories/user.repo'
+import { insertFeedback } from '../repositories/feedback.repo'
 import { attemptSelfJoin, JoinAttempt } from './pool.service'
 import { transitionRide, transitionPool } from './transition'
 import { findRideEvents } from '../repositories/event.repo'
@@ -167,4 +168,49 @@ export async function getRideById(id: string, passengerId: string): Promise<Ride
     ride:     toPassengerRideDTO(ride),
     timeline: events.map(e => toRideEventDTO(e, passengerId)),
   }
+}
+
+export const submitFeedbackSchema = z.object({
+  rating:  z.number().int().min(1).max(5),
+  comment: z.string().trim().min(1).max(500).optional(),
+})
+
+/**
+ * A passenger may rate a ride only once they've actually been dropped off —
+ * not while waiting, not while aboard — and only once ever, enforced by
+ * ride_feedback's own UNIQUE(ride_request_id) rather than a read-then-write
+ * check here.
+ */
+export async function submitFeedback(
+  passengerId: string,
+  rideId: string,
+  data: z.infer<typeof submitFeedbackSchema>,
+): Promise<PassengerRideDTO> {
+  const owned = await findRideById(rideId, passengerId)
+  if (!owned) throw new NotFoundError('Ride not found')
+
+  if (owned.status !== 'DROPPED_OFF') {
+    throw new ConflictError(
+      'NOT_DROPPED_OFF',
+      'You can only rate a ride once you’ve been dropped off',
+    )
+  }
+
+  try {
+    await withTransaction(tx => insertFeedback(tx, {
+      rideRequestId: rideId,
+      passengerId,
+      rating:        data.rating,
+      comment:       data.comment ?? null,
+    }))
+  } catch (err: unknown) {
+    // unique violation on ride_feedback's ride_request_id
+    if ((err as { code?: string }).code === '23505') {
+      throw new ConflictError('FEEDBACK_ALREADY_GIVEN', 'You already rated this ride')
+    }
+    throw err
+  }
+
+  const updated = await findRideById(rideId, passengerId)
+  return toPassengerRideDTO(updated!)
 }

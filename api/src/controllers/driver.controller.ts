@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
 import { z } from 'zod'
 import {
-  setAvailability, availabilitySchema, getRequestFeed, getProfile,
+  setAvailability, availabilitySchema, getRequestFeed, getProfile, getHistory,
 } from '../services/driver.service'
 import { AuthedRequest } from './auth.controller'
 
@@ -20,6 +20,15 @@ export async function requestFeedHandler(req: Request, res: Response, next: Next
   try {
     const requests = await getRequestFeed((req as AuthedRequest).user.id)
     res.json({ requests })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function historyHandler(req: Request, res: Response, next: NextFunction) {
+  try {
+    const pools = await getHistory((req as AuthedRequest).user.id)
+    res.json({ pools })
   } catch (err) {
     next(err)
   }

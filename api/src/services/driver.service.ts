@@ -2,13 +2,17 @@ import { z } from 'zod'
 import { updateDriverAvailability, findUserById } from '../repositories/user.repo'
 import { findZoneById } from '../repositories/zone.repo'
 import { findOpenRequestsInZone, sumDriverEarnings } from '../repositories/ride.repo'
-import { findActivePoolByDriver, findVehicleByDriver, findPoolMembers, PoolMemberRow } from '../repositories/pool.repo'
+import {
+  findActivePoolByDriver, findPoolHistoryByDriver, findVehicleByDriver,
+  findPoolMembers, PoolMemberRow,
+} from '../repositories/pool.repo'
 import { loadJoinContext, joinRejectionMessage } from './pool.service'
 import { canJoin } from '../domain/matching'
 import { farePaisaFor } from '../domain/fare'
 import {
   toDriverProfileDTO, DriverProfileDTO,
   toDriverRequestDTO, DriverRequestDTO,
+  toDriverPoolDTO, DriverPoolDTO,
 } from '../dto/driver.dto'
 import { NotFoundError, ForbiddenRoleError } from '../errors'
 
@@ -111,4 +115,17 @@ export async function getRequestFeed(driverId: string): Promise<DriverRequestDTO
 
     return toDriverRequestDTO(r, verdict, grossFarePaisa, joinRejectionMessage(verdict.reason))
   })
+}
+
+/**
+ * This driver's own finished trips — completed or cancelled, newest first.
+ * findPoolHistoryByDriver scopes the query to driverId from the caller's own
+ * token, so with any number of drivers each one only ever sees their own.
+ */
+export async function getHistory(driverId: string): Promise<DriverPoolDTO[]> {
+  const pools = await findPoolHistoryByDriver(driverId)
+  return Promise.all(pools.map(async pool => {
+    const members = await findPoolMembers(pool.id)
+    return toDriverPoolDTO(pool, members)
+  }))
 }

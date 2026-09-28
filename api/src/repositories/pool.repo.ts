@@ -3,6 +3,7 @@ import { db } from '../db/pool'
 import { Gender } from './user.repo'
 
 const ACTIVE_POOL_STATUSES = ['FORMING', 'ACCEPTED', 'DRIVER_ARRIVED', 'EN_ROUTE']
+const FINISHED_POOL_STATUSES = ['COMPLETED', 'CANCELLED']
 
 export interface PoolRow {
   id: string
@@ -86,6 +87,21 @@ export async function findActivePoolByDriver(driverId: string): Promise<PoolRow 
     [driverId, ACTIVE_POOL_STATUSES],
   )
   return rows[0] ?? null
+}
+
+/**
+ * Every pool this driver has ever finished, one way or another — the driver's
+ * own trip history. Scoped by v.driver_id, taken from the caller's own token
+ * (see driver.service.ts), never from a request parameter, so one driver can
+ * never see another's. Newest first, same ordering as a passenger's own
+ * findRidesByPassenger.
+ */
+export async function findPoolHistoryByDriver(driverId: string): Promise<PoolRow[]> {
+  const { rows } = await db.query<PoolRow>(
+    `${SELECT_POOL} WHERE v.driver_id = $1 AND p.status = ANY($2) ORDER BY p.created_at DESC`,
+    [driverId, FINISHED_POOL_STATUSES],
+  )
+  return rows
 }
 
 /**

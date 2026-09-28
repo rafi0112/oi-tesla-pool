@@ -248,3 +248,19 @@ Each is implemented consistently throughout the codebase and seed data.
     `canGiveFeedback` boolean (`status === 'DROPPED_OFF' && feedback === null`),
     so the frontend never has to re-derive that rule itself — the same pattern
     `canCancel` already uses.
+
+19. **`GET /drivers/history` mirrors `GET /rides/mine` on the driver side: every
+    finished trip belonging to the calling driver, and nothing belonging to any
+    other driver.**
+    A passenger's ride history has existed since the MVP (`findRidesByPassenger`
+    scoped by `passenger_id`); the driver console had no equivalent — only
+    `GET /pools/active`, which shows the one pool currently in progress and
+    nothing once it's `COMPLETED` or `CANCELLED`. `findPoolHistoryByDriver`
+    closes that gap the same way: `WHERE v.driver_id = $1`, with `$1` always
+    the calling driver's own id from their JWT, never a request parameter — so
+    with any number of drivers on the platform, each one only ever sees pools
+    their own vehicle carried. Reuses `toDriverPoolDTO`, the same DTO
+    `GET /pools/active` already returns, so a finished trip's shape in history
+    is identical to the shape it had while active — passenger names, per-seat
+    fares and all, since a driver (unlike a fellow passenger — see assumption
+    17) has always been shown who they drove.

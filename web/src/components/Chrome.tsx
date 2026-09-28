@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Navigate } from 'react-router'
 import { homeFor, useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
@@ -46,32 +46,96 @@ export function Avatar({ name, size = 36 }: { name: string; size?: number }) {
 }
 
 export function AppHeader({ sub, children }: { sub: string; children?: ReactNode }) {
-  const { user, logout } = useAuth()
-
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-paper/85 backdrop-blur-xl">
-      <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3 sm:px-6">
-        <Logo size="sm" sub={sub} />
-        <div className="flex-1">{children}</div>
-        <ThemeToggle />
-        {user && (
-          <div className="flex items-center gap-3">
-            <div className="hidden text-right sm:block">
-              <p className="text-sm font-semibold leading-tight text-ink">{user.name}</p>
-              <p className="eyebrow !text-[0.6rem]">{user.role === 'DRIVER' ? 'Driver' : 'Passenger'}</p>
-            </div>
-            <Avatar name={user.name} />
-            <button
-              type="button"
-              onClick={logout}
-              className="rounded-lg px-2.5 py-1.5 text-sm font-medium text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
-            >
-              Sign out
-            </button>
-          </div>
-        )}
+      <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 sm:gap-4 sm:px-6">
+        <Logo size="sm" sub={sub} subHiddenOnMobile />
+        <div className="min-w-0 flex-1">{children}</div>
+        <UserMenu />
       </div>
     </header>
+  )
+}
+
+/**
+ * One compact control instead of a name, a role label, an avatar, a theme
+ * toggle and a "Sign out" button all fighting for the same row — that's what
+ * made the header crowd out "Driver console" into two lines on a phone. The
+ * avatar alone is now the only thing that always shows; everything else lives
+ * in the dropdown it opens, at any screen size.
+ */
+function UserMenu() {
+  const { user, logout } = useAuth()
+  const { theme, toggle } = useTheme()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    function onEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onOutside)
+    document.addEventListener('keydown', onEscape)
+    return () => {
+      document.removeEventListener('mousedown', onOutside)
+      document.removeEventListener('keydown', onEscape)
+    }
+  }, [open])
+
+  if (!user) return null
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Account menu"
+        className="grid place-items-center rounded-full transition-transform active:scale-95"
+      >
+        <Avatar name={user.name} />
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="animate-rise absolute right-0 top-[calc(100%+0.5rem)] w-60 overflow-hidden rounded-2xl border border-line bg-surface shadow-[0_20px_44px_-16px_rgb(0_0_0/0.35)]"
+          style={{ animationDuration: '160ms' }}
+        >
+          <div className="flex items-center gap-3 border-b border-line px-4 py-3.5">
+            <Avatar name={user.name} size={38} />
+            <div className="min-w-0">
+              <p className="truncate text-sm font-bold leading-tight text-ink">{user.name}</p>
+              <p className="eyebrow mt-0.5 !text-[0.6rem]">{user.role === 'DRIVER' ? 'Driver' : 'Passenger'}</p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            role="menuitem"
+            onClick={toggle}
+            className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-ink transition-colors hover:bg-surface-2"
+          >
+            <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
+            <ThemeToggle className="pointer-events-none !h-6 !w-6" />
+          </button>
+
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => void logout()}
+            className="flex w-full items-center px-4 py-3 text-sm font-semibold text-alert transition-colors hover:bg-alert-soft"
+          >
+            Sign out
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -86,6 +150,9 @@ export function ProtectedRoute({ role, children }: { role: Role; children: React
     )
   }
   if (!user) return <Navigate to="/login" replace />
+  // An OAuth sign-in (Google/LinkedIn) has no role or vehicle yet — finish
+  // that one-time step before anything role-gated is reachable.
+  if (!user.profileCompleted) return <Navigate to="/complete-profile" replace />
   if (user.role !== role) return <Navigate to={homeFor(user.role)} replace />
   return <>{children}</>
 }
@@ -93,5 +160,7 @@ export function ProtectedRoute({ role, children }: { role: Role; children: React
 export function RootRedirect() {
   const { user, restoring } = useAuth()
   if (restoring) return null
-  return <Navigate to={user ? homeFor(user.role) : '/login'} replace />
+  if (!user) return <Navigate to="/login" replace />
+  if (!user.profileCompleted) return <Navigate to="/complete-profile" replace />
+  return <Navigate to={homeFor(user.role)} replace />
 }

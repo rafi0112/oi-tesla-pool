@@ -1,5 +1,7 @@
 /** ওই — "Oi", the Dhaka street hail — set in Galada, after hand-painted rickshaw signs. */
-export function Logo({ size = 'md', sub }: { size?: 'sm' | 'md' | 'xl'; sub?: string }) {
+export function Logo({
+  size = 'md', sub, subHiddenOnMobile = false,
+}: { size?: 'sm' | 'md' | 'xl'; sub?: string; /** For a cramped app-header context — the hero logo always keeps its sub visible. */ subHiddenOnMobile?: boolean }) {
   const bangla = { sm: 'text-[1.9rem]', md: 'text-[2.35rem]', xl: 'text-[5.5rem] sm:text-[7rem]' }[size]
   const latin  = { sm: 'text-[0.95rem]', md: 'text-[1.05rem]', xl: 'text-[1.6rem] sm:text-[2rem]' }[size]
 
@@ -15,7 +17,11 @@ export function Logo({ size = 'md', sub }: { size?: 'sm' | 'md' | 'xl'; sub?: st
         <span className={`font-display font-extrabold tracking-[-0.03em] text-ink ${latin}`}>
           Tesla Pool
         </span>
-        {sub && <span className="eyebrow mt-1.5 !text-[0.6rem]">{sub}</span>}
+        {sub && (
+          <span className={`eyebrow mt-1.5 !text-[0.6rem] ${subHiddenOnMobile ? 'hidden sm:block' : ''}`}>
+            {sub}
+          </span>
+        )}
       </span>
     </div>
   )

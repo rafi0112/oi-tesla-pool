@@ -305,3 +305,59 @@ Each is implemented consistently throughout the codebase and seed data.
     stays available on any booking, not gated behind a prior expiry, but the
     booking form nudges it by default right after the passenger's last request
     timed out.
+
+22. **Registration creates a driver's vehicle in the same transaction as the
+    account — there is no separate "add a vehicle" step, before or after.**
+    `POST /auth/register` now takes an optional `vehicleName` /
+    `seatCapacity`, required if and only if `role: 'DRIVER'`
+    (`ValidationError` otherwise, same as any other missing field). Both are
+    written by `createVehicle` inside the same `withTransaction` as
+    `createUser`, so a driver can never exist without a vehicle, and a vehicle
+    can never exist without its driver — `vehicles.driver_id` stays `UNIQUE`
+    and this is its only writer outside `seed.ts`. A passenger registering
+    supplies neither field. The frontend (`Register.tsx`) mirrors this: the
+    two vehicle inputs only render, and only become required, once "Driver"
+    is chosen.
+
+23. **The API can point at any Postgres, local or managed, through
+    `DATABASE_URL` alone — nothing else in the code is host-specific.**
+    The project already used raw `pg` with no ORM, so a managed host (Supabase
+    among them) needs only its own TLS: `db/pool.ts` now enables
+    `ssl: { rejectUnauthorized: false }` automatically whenever the connection
+    host isn't `localhost`/`127.0.0.1`/`::1`, and leaves local Postgres (the
+    docker-compose service) untouched. `rejectUnauthorized: false` is a
+    deliberate simplification for a project without a bundled CA list, not a
+    security posture — accepted here because the same connection string
+    already carries the database password as its own credential. Nothing else
+    changes: the same migrations, the same `pg` client, the same custom
+    argon2 + JWT auth against the same `users` table, whether that table lives
+    in the docker-compose container or a Supabase project.
+
+24. **Any current member of a pool — not just whoever's own `wait_minutes`
+    opened it — may halve however much time is actually left on the window,
+    and every other member and the driver see the shorter timer immediately.**
+    `POST /pools/:id/urgent` is the "I'm in a hurry" button. It's deliberately
+    not scoped to the passenger whose join first opened the FORMING window
+    (assumption 13) — anyone currently `MATCHED` in that pool can press it,
+    since urgency is personal, not seniority. `halveWaitUntil` (`pool.repo.ts`)
+    computes `now() + (wait_until - now()) / 2` — half of what's *left*, not
+    half of the original window — and only takes effect while the pool is
+    still `FORMING` with time actually remaining; pressing it on a closed or
+    already-expired window does nothing (`409 NOT_WAITING`), same as trying to
+    join one. This needed no new "make everyone see it" mechanism: `wait_until`
+    was already the one pool-level field every member's own ride view and the
+    driver's console both read live (assumption 13's `ratchetWaitUntil` already
+    established this pattern for a joiner's own patience) — halving it here
+    updates that same row, so the next poll from any of them just shows a
+    smaller number. `canJoin`'s window check, `autoCloseIfExpired`, and the
+    nearby-pools countdown all read the same `wait_until` the same way
+    regardless of who shortened it, which is what "the rest of the
+    functionality will work accordingly" means concretely: nothing downstream
+    had to be taught about urgency at all.
+
+    A passenger's own ride view gains `poolWaitUntil` (`PassengerRideDTO`) —
+    the same value `DriverPoolDTO.waitUntil` already exposed, now visible to
+    the passenger side too, rendered by the same `WindowTimer` component both
+    consoles share. Gender-only visibility before joining a pool (assumption
+    17, `PoolOptionDTO.memberGenders`) was already in place and needed no
+    change for this feature.

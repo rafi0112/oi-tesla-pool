@@ -68,6 +68,24 @@ export async function findVehicleByDriver(driverId: string): Promise<VehicleRow 
   return rows[0] ?? null
 }
 
+/**
+ * A driver has exactly one vehicle (driver_id is UNIQUE), created once at
+ * registration — see auth.service.ts's register(). Nothing else ever
+ * creates one; there's no separate "add a vehicle" flow.
+ */
+export async function createVehicle(
+  tx: PoolClient,
+  data: { driverId: string; name: string; seatCapacity: number },
+): Promise<VehicleRow> {
+  const { rows } = await tx.query<VehicleRow>(
+    `INSERT INTO vehicles (driver_id, name, seat_capacity)
+     VALUES ($1, $2, $3)
+     RETURNING *`,
+    [data.driverId, data.name, data.seatCapacity],
+  )
+  return rows[0]
+}
+
 export async function findPoolById(id: string): Promise<PoolRow | null> {
   const { rows } = await db.query<PoolRow>(`${SELECT_POOL} WHERE p.id = $1`, [id])
   return rows[0] ?? null
@@ -216,6 +234,30 @@ export async function ratchetWaitUntil(
 /** Ends the assembling window immediately — no further joins, whatever the clock says. */
 export async function clearWaitUntil(tx: PoolClient, poolId: string): Promise<void> {
   await tx.query(`UPDATE pools SET wait_until = NULL WHERE id = $1`, [poolId])
+}
+
+/**
+ * The "I'm in a hurry" button: halves whatever time is actually left on the
+ * pool's wait window, right now — not half of the original window, half of
+ * what remains. Only takes effect while the pool is still FORMING and
+ * genuinely has time left; a caller acting on a stale view (window already
+ * closed) gets no row back rather than reopening a closed pool. Every current
+ * member reads the same wait_until off this one pool row, so the shortened
+ * timer is visible to all of them the moment they next poll — nothing is
+ * pushed to them individually.
+ */
+export async function halveWaitUntil(tx: PoolClient, poolId: string): Promise<string | null> {
+  const { rows } = await tx.query<{ wait_until: string }>(
+    `UPDATE pools
+        SET wait_until = now() + (wait_until - now()) / 2
+      WHERE id = $1
+        AND status = 'FORMING'
+        AND wait_until IS NOT NULL
+        AND wait_until > now()
+      RETURNING wait_until`,
+    [poolId],
+  )
+  return rows[0]?.wait_until ?? null
 }
 
 /**

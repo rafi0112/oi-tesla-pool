@@ -42,6 +42,13 @@ export interface RideRow {
   feedback: FeedbackRow | null
   /** The reason the most recent CANCELLED transition recorded — null if never cancelled. */
   cancel_reason: string | null
+  /**
+   * The pool's own wait deadline — null once it's no longer accepting new
+   * joins (closed, expired, or never opened). Every current member sees this
+   * same value, so it's how "all the pool members can see that timer" holds:
+   * it isn't copied per rider, it's read live off the one pool row they share.
+   */
+  pool_wait_until: string | null
 }
 
 export interface FeedbackRow {
@@ -81,7 +88,8 @@ const SELECT_RIDE = `
          (SELECT e.reason
             FROM ride_status_events e
            WHERE e.ride_request_id = r.id AND e.to_status = 'CANCELLED'
-           ORDER BY e.created_at DESC LIMIT 1) AS cancel_reason
+           ORDER BY e.created_at DESC LIMIT 1) AS cancel_reason,
+         pl.wait_until AS pool_wait_until
   FROM   ride_requests r
   JOIN   zones pz ON pz.id = r.pickup_zone_id
   JOIN   zones dz ON dz.id = r.destination_zone_id
@@ -150,6 +158,17 @@ export async function findActiveRideByPassenger(passengerId: string): Promise<Ri
     [passengerId],
   )
   return rows[0] ? mapRide(rows[0]) : null
+}
+
+/** True while this passenger currently has a MATCHED (waiting-to-board) booking in this pool. */
+export async function isMatchedInPool(passengerId: string, poolId: string): Promise<boolean> {
+  const { rows } = await db.query(
+    `SELECT 1 FROM ride_requests
+      WHERE pool_id = $1 AND passenger_id = $2 AND status = 'MATCHED'
+      LIMIT 1`,
+    [poolId, passengerId],
+  )
+  return rows.length > 0
 }
 
 export async function createRide(

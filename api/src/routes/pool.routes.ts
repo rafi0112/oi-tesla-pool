@@ -8,6 +8,7 @@ import {
   activePoolHandler, closePoolHandler, arriveHandler,
   startTripHandler, dropoffHandler, completeTripHandler,
   nearbyPoolsQuerySchema, nearbyPoolsHandler,
+  urgencyHandler,
 } from '../controllers/pool.controller'
 
 const router = Router()
@@ -18,6 +19,10 @@ router.use(authenticate)
 // driver-only guard below, and precede any /:id route so "nearby" is never
 // read as a pool id.
 router.get('/nearby', requireRole('PASSENGER'), validateQuery(nearbyPoolsQuerySchema), nearbyPoolsHandler)
+
+// Any current member may press this, not just the driver — must also precede
+// the blanket driver-only guard below.
+router.post('/:id/urgent', requireRole('PASSENGER'), urgencyHandler)
 
 router.use(requireRole('DRIVER'))
 

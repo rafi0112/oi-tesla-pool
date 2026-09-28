@@ -30,6 +30,13 @@ export interface PassengerRideDTO {
    * learn another's identity, only their gender.
    */
   sharedGenders: Gender[]
+  /**
+   * The pool's own wait deadline — null once it's no longer accepting new
+   * joins. Every current member reads this same value (see
+   * pool.service.ts's applyUrgency), so all of them see the same countdown,
+   * and any of them pressing "urgent" shortens what everyone else sees too.
+   */
+  poolWaitUntil: string | null
   /** Set once this passenger has rated the ride — only possible after DROPPED_OFF. */
   feedback: FeedbackDTO | null
   /** True once the ride is DROPPED_OFF and no feedback has been given yet. */
@@ -113,6 +120,7 @@ export function toPassengerRideDTO(r: RideRow): PassengerRideDTO {
                         : null,
     sharedWith:       r.shared_with,
     sharedGenders:    r.shared_genders,
+    poolWaitUntil:    r.pool_wait_until,
     feedback:         r.feedback,
     canGiveFeedback:  r.status === 'DROPPED_OFF' && r.feedback === null,
     canCancel:        canTransition('ride', r.status, 'CANCELLED'),

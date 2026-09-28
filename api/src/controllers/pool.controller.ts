@@ -5,7 +5,7 @@ import {
   joinPool, joinPoolSchema,
   startTrip, closePool, markArrived,
   dropOffPassenger, completeTrip, getActivePool,
-  findNearbyPools,
+  findNearbyPools, applyUrgency,
 } from '../services/pool.service'
 import { POOL_POLICY } from '../domain/matching'
 import { AuthedRequest } from './auth.controller'
@@ -92,6 +92,16 @@ export async function startTripHandler(req: Request, res: Response, next: NextFu
   try {
     const pool = await startTrip((req as AuthedRequest).user.id, req.params.id)
     res.json({ pool })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function urgencyHandler(req: Request, res: Response, next: NextFunction) {
+  try {
+    const passengerId = (req as AuthedRequest).user.id
+    const result = await applyUrgency(passengerId, req.params.id)
+    res.json(result)
   } catch (err) {
     next(err)
   }

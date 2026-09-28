@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { withTransaction } from '../db/pool'
 import { findUserById } from '../repositories/user.repo'
 import {
-  findRideById, setRidePool, lockRideById,
+  findRideById, setRidePool, lockRideById, isMatchedInPool,
   lockMatchedMembers, setFinalFare, countPickedUpInPool,
 } from '../repositories/ride.repo'
 import {
@@ -17,6 +17,7 @@ import {
   lockPoolById,
   ratchetWaitUntil,
   clearWaitUntil,
+  halveWaitUntil,
   PoolRow,
   PoolMemberRow,
 } from '../repositories/pool.repo'
@@ -363,6 +364,53 @@ export async function findNearbyPools(
 
   // Joinable options first, then by seats available, so the best fit leads.
   return options.sort((a, b) => Number(b.joinable) - Number(a.joinable) || b.seatsAvailable - a.seatsAvailable)
+}
+
+/**
+ * Any passenger currently waiting in a FORMING pool — not just the one whose
+ * own wait_minutes opened it — can press "urgent" to halve however much time
+ * is actually left, if they can't wait as long as the room currently expects.
+ * The result is the one wait_until every member (and the driver) already
+ * reads, so this is the whole mechanism by which everyone sees the shorter
+ * timer: nothing is pushed to anyone, the next poll just sees a smaller
+ * number. Every downstream rule — canJoin's window check, autoCloseIfExpired,
+ * the nearby listing's countdown — reads wait_until the same way regardless
+ * of who shortened it or why, so nothing else needs to change to make "the
+ * rest of the functionality work accordingly" true.
+ */
+export async function applyUrgency(passengerId: string, poolId: string): Promise<{ poolWaitUntil: string }> {
+  const pool = await findPoolFresh(poolId)
+  if (!pool) throw new NotFoundError('Pool not found')
+
+  // 404, not 403 — same reasoning as every other ownership check in this
+  // file: a passenger who isn't aboard this pool has no business learning it
+  // exists, let alone that it's currently FORMING.
+  const isMember = await isMatchedInPool(passengerId, poolId)
+  if (!isMember) throw new NotFoundError('Pool not found')
+
+  if (pool.status !== 'FORMING' || pool.wait_until === null) {
+    throw new ConflictError(
+      'NOT_WAITING',
+      'This pool isn’t waiting for anyone right now — there’s no timer to reduce',
+    )
+  }
+
+  const poolWaitUntil = await withTransaction(async tx => {
+    const locked = await lockPoolById(tx, poolId)
+    const halved = locked ? await halveWaitUntil(tx, poolId) : null
+    if (!locked || halved === null) {
+      throw new ConflictError(
+        'NOT_WAITING',
+        'This pool isn’t waiting for anyone right now — there’s no timer to reduce',
+      )
+    }
+    await insertPoolEvent(tx, {
+      poolId, fromStatus: 'FORMING', toStatus: 'FORMING', actorUserId: passengerId, reason: 'urgency_halved',
+    })
+    return halved
+  })
+
+  return { poolWaitUntil }
 }
 
 export function joinRejectionMessage(reason: string | undefined): string {

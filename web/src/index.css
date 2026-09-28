@@ -56,6 +56,32 @@
   color-scheme: light;
 }
 
+/*
+ * The app-wide dark theme, toggled by ThemeProvider via data-theme="dark" on
+ * <html>. Values match .theme-console below, which stays a separate,
+ * always-dark class used for Login's hero panel regardless of this toggle.
+ */
+:root[data-theme="dark"] {
+  --paper:        #0A0C0B;
+  --surface:      #121614;
+  --surface-2:    #1A1F1C;
+  --ink:          #EDF2EE;
+  --ink-2:        #B3BCB5;
+  --ink-3:        #86908A;
+  --line:         #232A26;
+  --line-2:       #313A35;
+  --signal:       #2EE08A;
+  --on-signal:    #03140B;
+  --signal-soft:  #0E2A1C;
+  --marigold:     #FFB23F;
+  --marigold-ink: #FFC56B;
+  --marigold-soft:#2E2210;
+  --alert:        #FF6A56;
+  --alert-soft:   #2E1410;
+
+  color-scheme: dark;
+}
+
 .theme-console {
   --paper:        #0A0C0B;
   --surface:      #121614;

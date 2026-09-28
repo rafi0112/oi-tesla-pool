@@ -43,10 +43,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [restoring, setRestoring] = useState(true)
 
+  // A 401 (usually the 24h token finally expiring) must never leave the
+  // passenger or driver stuck looking at a bare "Missing or invalid token"
+  // card with no way out but a manual refresh. Clearing React state and
+  // trusting ProtectedRoute's client-side <Navigate> to swap the tree in the
+  // same render usually works — but the component that hit the 401 (e.g.
+  // PassengerHome's own ride list, on its very first load) can render its own
+  // error the very same tick, and there is no guarantee that always loses the
+  // race. A hard redirect sidesteps that entirely: the whole app remounts
+  // fresh against /login, so there is nothing stale left to reconcile.
   const logout = useCallback(() => {
     setToken(null)
     writeSession(null)
     setUser(null)
+    if (window.location.pathname !== '/login') {
+      window.location.assign('/login')
+    }
   }, [])
 
   useEffect(() => {

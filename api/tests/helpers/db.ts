@@ -92,6 +92,32 @@ export async function seedWorld(passengerNames: string[]): Promise<TestWorld> {
   }
 }
 
+/**
+ * Adds a second (or third, …) driver with their own vehicle, on top of
+ * seedWorld's own — for tests that need to prove one driver's data is scoped
+ * away from another's. Login as this driver with tokenFor(name), same as any
+ * seedWorld driver or passenger.
+ */
+export async function addDriver(name: string, vehicleName = 'Rocket'): Promise<{ driverId: string; vehicleId: string }> {
+  const hash = await argon2.hash(TEST_PASSWORD)
+  const email = `${name.split(' ')[0].toLowerCase()}@oitesla.test`
+
+  const { rows: driverRows } = await db.query<{ id: string }>(
+    `INSERT INTO users (name, email, password_hash, role, gender)
+     VALUES ($1, $2, $3, 'DRIVER', $4) RETURNING id`,
+    [name, email, hash, genderFor(name)],
+  )
+  const driverId = driverRows[0].id
+
+  const { rows: vehicleRows } = await db.query<{ id: string }>(
+    `INSERT INTO vehicles (driver_id, name, seat_capacity)
+     VALUES ($1, $2, 3) RETURNING id`,
+    [driverId, vehicleName],
+  )
+
+  return { driverId, vehicleId: vehicleRows[0].id }
+}
+
 export async function seatsAvailable(poolId: string): Promise<number> {
   const { rows } = await db.query<{ seats_available: number }>(
     `SELECT seats_available FROM pools WHERE id = $1`,

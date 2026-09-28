@@ -45,6 +45,8 @@ export interface PassengerRide {
   status: RideStatus
   farePaisa: number
   quotedFarePaisa: number
+  /** What this passenger chose to add on top to attract a driver faster — already folded into quotedFarePaisa and farePaisa. */
+  bonusPaisa: number
   finalFarePaisa: number | null
   pickupZone: ZoneRef
   destinationZone: ZoneRef
@@ -59,6 +61,8 @@ export interface PassengerRide {
   /** True once the ride is DROPPED_OFF and no feedback has been given yet. */
   canGiveFeedback: boolean
   canCancel: boolean
+  /** Why the ride was last cancelled — e.g. 'request_expired' when nobody answered in 15 minutes. Null if never cancelled. */
+  cancelReason: string | null
   createdAt: string
 }
 
@@ -95,6 +99,8 @@ export interface DriverPassenger {
   pickupZone: ZoneRef
   destinationZone: ZoneRef
   farePaisa: number
+  /** What this passenger added on top to attract a driver faster — 0 if none. */
+  bonusPaisa: number
 }
 
 export interface DriverPool {
@@ -128,6 +134,8 @@ export interface DriverRequest {
    * the bigger shared-ride discount) if the driver already has an active pool.
    */
   grossFarePaisa: number
+  /** What this passenger added on top to attract a driver faster — 0 if none. */
+  bonusPaisa: number
   reason?: string
 }
 

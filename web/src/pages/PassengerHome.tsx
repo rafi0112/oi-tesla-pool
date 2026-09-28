@@ -16,7 +16,7 @@ import { bearingDeg, compassPoint } from '../lib/geo'
 import {
   clockTime, firstName, formatTaka, plural, RIDE_STATUS_LABEL, shortDate,
 } from '../lib/format'
-import { WAIT_MINUTES_OPTIONS } from '../lib/policy'
+import { BONUS_PAISA_OPTIONS, REQUEST_EXPIRY_MINUTES, WAIT_MINUTES_OPTIONS } from '../lib/policy'
 
 const ACTIVE: ReadonlySet<RideStatus> = new Set(['REQUESTED', 'MATCHED', 'PICKED_UP'])
 const MAX_SEATS = 3
@@ -43,6 +43,9 @@ export function PassengerHome() {
     () => (rides.data ?? []).filter(r => r.status === 'DROPPED_OFF' || r.status === 'CANCELLED'),
     [rides.data],
   )
+  // The most recent thing that happened was our own request timing out —
+  // worth a nudge toward offering a bonus this time, right where booking happens.
+  const justExpired = !active && past[0]?.cancelReason === 'request_expired'
 
   const loading = rides.loading || zones.loading
   const failure = rides.error ?? zones.error
@@ -89,6 +92,7 @@ export function PassengerHome() {
               <BookingTicket
                 zones={zones.data}
                 savedZoneId={profile.data?.currentZone?.id ?? null}
+                justExpired={justExpired}
                 onBooked={afterBooked}
               />
             ) : null}
@@ -128,11 +132,13 @@ function Greeting({ name, ride }: { name: string; ride?: PassengerRide }) {
 /* ─────────────────────────────────────────────────────────── booking ── */
 
 function BookingTicket({
-  zones, savedZoneId, onBooked,
+  zones, savedZoneId, justExpired, onBooked,
 }: {
   zones: Zone[]
   /** The passenger's last-used pickup zone, once their profile has loaded. */
   savedZoneId: number | null
+  /** True when the last thing that happened was this passenger's own request timing out unanswered. */
+  justExpired: boolean
   onBooked: (joinAttempt?: JoinAttempt) => Promise<void>
 }) {
   const defaultPickup = zones.find(z => z.name === 'Banani')?.id ?? zones[0].id
@@ -150,6 +156,9 @@ function BookingTicket({
   }, [savedZoneId])
   const [seats, setSeats] = useState(1)
   const [waitMinutes, setWaitMinutes] = useState(0)
+  // Nudge a bonus by default right after a request expired unanswered — still
+  // just a starting point, the passenger can pick 'None' again.
+  const [bonusPaisa, setBonusPaisa] = useState(justExpired ? 1000 : 0)
   // 'solo' for the main button, a pool id for a specific row's Join button —
   // tracked separately so only the button actually clicked shows a spinner.
   const [submitting, setSubmitting] = useState<'solo' | string | null>(null)
@@ -193,7 +202,7 @@ function BookingTicket({
     setError(null)
     try {
       const { joinAttempt } = await api.bookRide(
-        { pickupZoneId: pickupId, destinationZoneId: destinationId!, seats, waitMinutes, poolId },
+        { pickupZoneId: pickupId, destinationZoneId: destinationId!, seats, waitMinutes, bonusPaisa, poolId },
         idempotencyKey.current,
       )
       idempotencyKey.current = crypto.randomUUID()
@@ -215,6 +224,13 @@ function BookingTicket({
             <p className="eyebrow">New ride</p>
             <p className="font-mono text-[0.68rem] text-ink-3">BULLET · 3 SEATS</p>
           </div>
+
+          {justExpired && (
+            <Notice tone="info">
+              Nobody accepted your last request within {REQUEST_EXPIRY_MINUTES} minutes, so it expired —
+              try again, maybe with a bonus to attract a driver faster.
+            </Notice>
+          )}
 
           <div className="relative space-y-3 pl-7">
             <span aria-hidden className="absolute left-[0.6rem] top-[1.9rem] bottom-[1.9rem] w-[2px] rounded-full bg-gradient-to-b from-ink-3/60 to-signal" />
@@ -295,6 +311,34 @@ function BookingTicket({
             </p>
           </fieldset>
 
+          <fieldset>
+            <legend className="mb-2 flex w-full items-baseline justify-between">
+              <span className="text-sm font-semibold text-ink-2">Add a bonus?</span>
+              <span className="text-xs text-ink-3">to attract a driver faster</span>
+            </legend>
+            <div role="radiogroup" aria-label="Bonus" className="inline-flex flex-wrap gap-1 rounded-xl border border-line-2 bg-surface-2 p-1">
+              {BONUS_PAISA_OPTIONS.map(opt => (
+                <button
+                  key={opt.paisa}
+                  type="button"
+                  role="radio"
+                  aria-checked={bonusPaisa === opt.paisa}
+                  onClick={() => setBonusPaisa(opt.paisa)}
+                  className={`rounded-lg px-3 py-1.5 font-mono text-xs font-bold transition-all ${
+                    bonusPaisa === opt.paisa ? 'bg-marigold text-marigold-ink shadow-sm' : 'text-ink-2 hover:text-ink'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-ink-3">
+              {bonusPaisa === 0
+                ? `A request nobody accepts in ${REQUEST_EXPIRY_MINUTES} min expires — you can always try again with a bonus then.`
+                : `Paid on top of your fare, and shown to drivers as extra for accepting your request first.`}
+            </p>
+          </fieldset>
+
           {ready && (
             <div>
               <p className="eyebrow mb-2">Riders already heading this way</p>
@@ -347,13 +391,16 @@ function BookingTicket({
               <div>
                 <p className="eyebrow">Your fare</p>
                 <p className="mt-1 font-mono text-4xl font-bold tracking-tight text-ink">
-                  {formatTaka(quote.data.soloFarePaisa)}
+                  {formatTaka(quote.data.soloFarePaisa + bonusPaisa)}
                 </p>
+                {bonusPaisa > 0 && (
+                  <p className="mt-0.5 text-xs text-marigold-ink">includes your +{formatTaka(bonusPaisa)} bonus</p>
+                )}
               </div>
               <div className="pb-1">
                 <p className="eyebrow !text-marigold-ink">If someone joins</p>
                 <p className="mt-1 font-mono text-xl font-bold text-marigold-ink">
-                  {formatTaka(quote.data.pooledFarePaisa)}
+                  {formatTaka(quote.data.pooledFarePaisa + bonusPaisa)}
                   <span className="ml-2 rounded-md bg-marigold-soft px-1.5 py-0.5 text-xs">−{formatTaka(saving)}</span>
                 </p>
               </div>
@@ -760,6 +807,7 @@ function PastRides({
 function PastRideRow({ ride: r, onReload }: { ride: PassengerRide; onReload: () => Promise<void> }) {
   const done = r.status === 'DROPPED_OFF'
   const pooled = r.farePaisa < r.quotedFarePaisa
+  const expired = r.cancelReason === 'request_expired'
 
   return (
     <li className="rounded-xl border border-line bg-surface-2/35 px-4 py-3">
@@ -774,11 +822,15 @@ function PastRideRow({ ride: r, onReload }: { ride: PassengerRide; onReload: () 
           <p className={`font-mono text-sm font-bold ${done ? 'text-ink' : 'text-ink-3 line-through'}`}>
             {formatTaka(r.farePaisa)}
           </p>
-          <p className={`mt-0.5 text-[0.68rem] font-bold uppercase tracking-wider ${done ? 'text-signal' : 'text-alert'}`}>
-            {done ? (pooled ? 'Arrived · pooled' : 'Arrived') : 'Cancelled'}
+          <p className={`mt-0.5 text-[0.68rem] font-bold uppercase tracking-wider ${done ? 'text-signal' : expired ? 'text-marigold-ink' : 'text-alert'}`}>
+            {done ? (pooled ? 'Arrived · pooled' : 'Arrived') : expired ? 'Expired · no driver in time' : 'Cancelled'}
           </p>
         </div>
       </div>
+
+      {r.bonusPaisa > 0 && (
+        <p className="mt-1.5 text-[0.68rem] text-marigold-ink">included a +{formatTaka(r.bonusPaisa)} bonus</p>
+      )}
 
       {r.sharedGenders.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-line/70 pt-2">

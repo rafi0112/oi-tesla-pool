@@ -14,3 +14,17 @@ export const WAIT_MINUTES_OPTIONS = [
   { minutes: 5,  label: '5 min' },
   { minutes: 10, label: '10 min' },
 ] as const
+
+/** Mirrors FARE_POLICY.maxBonusPaisa in the API's fare rule. */
+export const MAX_BONUS_PAISA = 5000
+
+/** Offered choices for "add a bonus to attract a driver faster" when booking. */
+export const BONUS_PAISA_OPTIONS = [
+  { paisa: 0,    label: 'None' },
+  { paisa: 1000, label: '+৳10' },
+  { paisa: 2500, label: '+৳25' },
+  { paisa: 5000, label: '+৳50' },
+] as const
+
+/** A REQUESTED ride nobody has matched within this long expires on its own. */
+export const REQUEST_EXPIRY_MINUTES = 15

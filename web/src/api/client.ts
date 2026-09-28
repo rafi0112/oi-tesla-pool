@@ -100,7 +100,7 @@ export const api = {
   bookRide: (
     body: {
       pickupZoneId: number; destinationZoneId: number; seats: number
-      waitMinutes?: number; poolId?: string
+      waitMinutes?: number; bonusPaisa?: number; poolId?: string
     },
     idempotencyKey: string,
   ) =>

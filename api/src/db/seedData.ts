@@ -1,10 +1,10 @@
 export const SEED_PASSWORD = 'Password123!'
 
 export const USERS = [
-  { name: 'Jashim Uddin',  email: 'jashim@oitesla.test',  role: 'DRIVER'    },
-  { name: 'Nusrat Jahan',  email: 'nusrat@oitesla.test',  role: 'PASSENGER' },
-  { name: 'Rafiq Hasan',   email: 'rafiq@oitesla.test',   role: 'PASSENGER' },
-  { name: 'Shirin Akter',  email: 'shirin@oitesla.test',  role: 'PASSENGER' },
+  { name: 'Jashim Uddin',  email: 'jashim@oitesla.test',  role: 'DRIVER',    gender: 'MALE'   },
+  { name: 'Nusrat Jahan',  email: 'nusrat@oitesla.test',  role: 'PASSENGER', gender: 'FEMALE' },
+  { name: 'Rafiq Hasan',   email: 'rafiq@oitesla.test',   role: 'PASSENGER', gender: 'MALE'   },
+  { name: 'Shirin Akter',  email: 'shirin@oitesla.test',  role: 'PASSENGER', gender: 'FEMALE' },
 ] as const
 
 export const VEHICLE = { name: 'Bullet', seatCapacity: 3 }

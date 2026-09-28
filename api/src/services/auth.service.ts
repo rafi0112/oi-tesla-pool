@@ -11,6 +11,7 @@ export const registerSchema = z.object({
   email:    z.string().email(),
   password: z.string().min(8),
   role:     z.enum(['PASSENGER', 'DRIVER']),
+  gender:   z.enum(['MALE', 'FEMALE', 'OTHER']),
 })
 
 export const loginSchema = z.object({
@@ -23,10 +24,11 @@ export type UserDTO = {
   name: string
   email: string
   role: string
+  gender: string
 }
 
 function toDTO(u: UserRow): UserDTO {
-  return { id: u.id, name: u.name, email: u.email, role: u.role }
+  return { id: u.id, name: u.name, email: u.email, role: u.role, gender: u.gender }
 }
 
 function signToken(user: UserRow): string {
@@ -40,7 +42,7 @@ export async function register(data: z.infer<typeof registerSchema>) {
   const passwordHash = await argon2.hash(data.password)
 
   const user = await withTransaction(tx =>
-    createUser(tx, { name: data.name, email: data.email, passwordHash, role: data.role }),
+    createUser(tx, { name: data.name, email: data.email, passwordHash, role: data.role, gender: data.gender }),
   )
 
   return { token: signToken(user), user: toDTO(user) }

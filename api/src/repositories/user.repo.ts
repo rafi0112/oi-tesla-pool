@@ -1,12 +1,15 @@
 import { PoolClient } from 'pg'
 import { db } from '../db/pool'
 
+export type Gender = 'MALE' | 'FEMALE' | 'OTHER'
+
 export interface UserRow {
   id: string
   name: string
   email: string
   password_hash: string
   role: 'PASSENGER' | 'DRIVER'
+  gender: Gender
   is_online: boolean
   current_zone_id: number | null
   created_at: string
@@ -66,13 +69,13 @@ export async function updateUserZone(
 
 export async function createUser(
   tx: PoolClient,
-  data: { name: string; email: string; passwordHash: string; role: 'PASSENGER' | 'DRIVER' },
+  data: { name: string; email: string; passwordHash: string; role: 'PASSENGER' | 'DRIVER'; gender: Gender },
 ): Promise<UserRow> {
   const { rows } = await tx.query<UserRow>(
-    `INSERT INTO users (name, email, password_hash, role)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO users (name, email, password_hash, role, gender)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
-    [data.name, data.email, data.passwordHash, data.role],
+    [data.name, data.email, data.passwordHash, data.role, data.gender],
   )
   return rows[0]
 }

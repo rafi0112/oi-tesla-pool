@@ -9,11 +9,11 @@ async function seed() {
 
     for (const u of USERS) {
       await client.query(
-        `INSERT INTO users (name, email, password_hash, role)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO users (name, email, password_hash, role, gender)
+         VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (email) DO UPDATE
-           SET name = EXCLUDED.name, role = EXCLUDED.role`,
-        [u.name, u.email, hash, u.role],
+           SET name = EXCLUDED.name, role = EXCLUDED.role, gender = EXCLUDED.gender`,
+        [u.name, u.email, hash, u.role, u.gender],
       )
     }
     console.log('seeded users')

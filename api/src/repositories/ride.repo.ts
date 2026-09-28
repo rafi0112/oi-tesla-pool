@@ -2,11 +2,6 @@ import { PoolClient } from 'pg'
 import { db } from '../db/pool'
 import { Gender } from './user.repo'
 
-export interface SharedRiderRow {
-  name: string
-  gender: Gender
-}
-
 export interface RideRow {
   id: string
   passenger_id: string
@@ -28,17 +23,27 @@ export interface RideRow {
   /** Other active bookings sharing this ride's pool — excludes this row. */
   shared_with: number
   /**
-   * Name and gender of every other booking that ever rode along in this
-   * ride's pool (matched, on board, or already dropped off) — excludes this
-   * row. Feeds both the live "Sharing" detail and the past-ride history,
-   * unlike shared_with, which only counts bookings still active (see
+   * Gender of every other booking that ever rode along in this ride's pool
+   * (matched, on board, or already dropped off) — excludes this row, and
+   * deliberately never carries a name: one passenger must never learn
+   * another's identity, only that someone of this gender shared the ride.
+   * Feeds both the live "Sharing" detail and the past-ride history, unlike
+   * shared_with, which only counts bookings still active (see
    * ACTIVE_IN_POOL in passenger.dto.ts) since dropped-off fares are already
    * locked and must not move.
    */
-  shared_riders: SharedRiderRow[]
+  shared_genders: Gender[]
   /** Null until the ride is matched to a pool. */
   driver_name: string | null
   vehicle_name: string | null
+  /** Null until the passenger rates this ride — only possible once DROPPED_OFF. */
+  feedback: FeedbackRow | null
+}
+
+export interface FeedbackRow {
+  rating: number
+  comment: string | null
+  createdAt: string
 }
 
 // distance_km is NUMERIC and shared_with is a COUNT, both of which pg hands back
@@ -60,13 +65,15 @@ const SELECT_RIDE = `
            WHERE peer.pool_id = r.pool_id
              AND peer.id <> r.id
              AND peer.status IN ('MATCHED','PICKED_UP')) AS shared_with,
-         (SELECT COALESCE(json_agg(json_build_object('name', pu.name, 'gender', pu.gender)
-                           ORDER BY pu.name), '[]')
+         (SELECT COALESCE(array_agg(pu.gender ORDER BY pu.gender), '{}')
             FROM ride_requests peer
             JOIN users pu ON pu.id = peer.passenger_id
            WHERE peer.pool_id = r.pool_id
              AND peer.id <> r.id
-             AND peer.status IN ('MATCHED','PICKED_UP','DROPPED_OFF')) AS shared_riders
+             AND peer.status IN ('MATCHED','PICKED_UP','DROPPED_OFF')) AS shared_genders,
+         (SELECT json_build_object('rating', f.rating, 'comment', f.comment, 'createdAt', f.created_at)
+            FROM ride_feedback f
+           WHERE f.ride_request_id = r.id) AS feedback
   FROM   ride_requests r
   JOIN   zones pz ON pz.id = r.pickup_zone_id
   JOIN   zones dz ON dz.id = r.destination_zone_id

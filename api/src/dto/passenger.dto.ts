@@ -1,11 +1,13 @@
-import { RideRow, SharedRiderRow } from '../repositories/ride.repo'
+import { RideRow, FeedbackRow } from '../repositories/ride.repo'
 import { StatusEventRow } from '../repositories/event.repo'
-import { UserRow } from '../repositories/user.repo'
+import { UserRow, Gender } from '../repositories/user.repo'
 import { ZoneRow } from '../repositories/zone.repo'
 import { fareFor } from '../domain/fare'
 import { canTransition } from '../domain/stateMachine'
 
 const ACTIVE_IN_POOL = new Set(['MATCHED', 'PICKED_UP'])
+
+export type FeedbackDTO = FeedbackRow
 
 export interface PassengerRideDTO {
   id: string
@@ -20,8 +22,16 @@ export interface PassengerRideDTO {
   /** Populated once matched. Never carries a co-passenger's details. */
   driver: { name: string; vehicle: string } | null
   sharedWith: number
-  /** Name and gender of every other booking that shared this ride's pool — the ride's own history record. */
-  sharedRiders: SharedRiderRow[]
+  /**
+   * Gender of every other booking that shared this ride's pool — the ride's
+   * own history record. Deliberately never a name: one passenger must never
+   * learn another's identity, only their gender.
+   */
+  sharedGenders: Gender[]
+  /** Set once this passenger has rated the ride — only possible after DROPPED_OFF. */
+  feedback: FeedbackDTO | null
+  /** True once the ride is DROPPED_OFF and no feedback has been given yet. */
+  canGiveFeedback: boolean
   canCancel: boolean
   createdAt: string
 }
@@ -94,7 +104,9 @@ export function toPassengerRideDTO(r: RideRow): PassengerRideDTO {
                         ? { name: r.driver_name, vehicle: r.vehicle_name }
                         : null,
     sharedWith:       r.shared_with,
-    sharedRiders:     r.shared_riders,
+    sharedGenders:    r.shared_genders,
+    feedback:         r.feedback,
+    canGiveFeedback:  r.status === 'DROPPED_OFF' && r.feedback === null,
     canCancel:        canTransition('ride', r.status, 'CANCELLED'),
     createdAt:        r.created_at,
   }

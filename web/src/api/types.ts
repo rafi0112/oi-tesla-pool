@@ -34,9 +34,10 @@ export interface Quote {
   pooledFarePaisa: number
 }
 
-export interface SharedRider {
-  name: string
-  gender: Gender
+export interface Feedback {
+  rating: number
+  comment: string | null
+  createdAt: string
 }
 
 export interface PassengerRide {
@@ -51,8 +52,12 @@ export interface PassengerRide {
   poolId: string | null
   driver: { name: string; vehicle: string } | null
   sharedWith: number
-  /** Name and gender of everyone else who shared this ride's pool — the ride's history record. */
-  sharedRiders: SharedRider[]
+  /** Gender of everyone else who shared this ride's pool — never their name. */
+  sharedGenders: Gender[]
+  /** Set once this passenger has rated the ride — only possible after DROPPED_OFF. */
+  feedback: Feedback | null
+  /** True once the ride is DROPPED_OFF and no feedback has been given yet. */
+  canGiveFeedback: boolean
   canCancel: boolean
   createdAt: string
 }

@@ -6,6 +6,7 @@ import { AppHeader, Avatar } from '../components/Chrome'
 import { GenderTag } from '../components/GenderTag'
 import { RouteRadar } from '../components/RouteRadar'
 import { SeatPips } from '../components/SeatPips'
+import { StarDisplay, StarPicker } from '../components/StarRating'
 import { StatusTrack } from '../components/StatusTrack'
 import {
   EmptyState, ErrorState, Notice, Skeleton, Spinner, StaleBadge,
@@ -94,7 +95,7 @@ export function PassengerHome() {
           </section>
 
           <aside className="lg:col-span-4">
-            <PastRides rides={past} loading={rides.loading} />
+            <PastRides rides={past} loading={rides.loading} onReload={rides.reload} />
           </aside>
         </div>
       </main>
@@ -555,14 +556,14 @@ function RideTicket({
             )}
           </Detail>
           <Detail label="Sharing">
-            {current.sharedRiders.length > 0 ? (
+            {current.sharedGenders.length > 0 ? (
               <span className="flex flex-wrap items-center gap-1.5">
-                {current.sharedRiders.map(r => (
-                  <span key={r.name} className="inline-flex items-center gap-1 rounded-md bg-surface-2 px-1.5 py-0.5">
-                    <span className="font-bold text-ink">{firstName(r.name)}</span>
-                    <GenderTag gender={r.gender} />
-                  </span>
-                ))}
+                <span className="font-bold text-ink">
+                  Shared with {plural(current.sharedGenders.length, 'other passenger')}
+                </span>
+                <span className="flex items-center gap-1">
+                  {current.sharedGenders.map((g, i) => <GenderTag key={i} gender={g} />)}
+                </span>
               </span>
             ) : (
               <span className="text-ink-3">Just you so far</span>
@@ -721,7 +722,9 @@ function CancelButton({ ride, onCancelled }: { ride: PassengerRide; onCancelled:
 
 /* ────────────────────────────────────────────────────────────── past ── */
 
-function PastRides({ rides, loading }: { rides: PassengerRide[]; loading: boolean }) {
+function PastRides({
+  rides, loading, onReload,
+}: { rides: PassengerRide[]; loading: boolean; onReload: () => Promise<void> }) {
   return (
     <section className="card animate-rise p-5 sm:p-6" style={{ animationDelay: '120ms' }} aria-labelledby="past-title">
       <div className="flex items-baseline justify-between">
@@ -747,44 +750,118 @@ function PastRides({ rides, loading }: { rides: PassengerRide[]; loading: boolea
         </EmptyState>
       ) : (
         <ul className="mt-4 space-y-2.5">
-          {rides.map(r => {
-            const done = r.status === 'DROPPED_OFF'
-            const pooled = r.farePaisa < r.quotedFarePaisa
-            return (
-              <li key={r.id} className="rounded-xl border border-line bg-surface-2/35 px-4 py-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-bold text-ink">
-                      {r.pickupZone.name} <span className="text-ink-3">→</span> {r.destinationZone.name}
-                    </p>
-                    <p className="mt-0.5 font-mono text-[0.68rem] text-ink-3">{shortDate(r.createdAt)}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className={`font-mono text-sm font-bold ${done ? 'text-ink' : 'text-ink-3 line-through'}`}>
-                      {formatTaka(r.farePaisa)}
-                    </p>
-                    <p className={`mt-0.5 text-[0.68rem] font-bold uppercase tracking-wider ${done ? 'text-signal' : 'text-alert'}`}>
-                      {done ? (pooled ? 'Arrived · pooled' : 'Arrived') : 'Cancelled'}
-                    </p>
-                  </div>
-                </div>
-                {r.sharedRiders.length > 0 && (
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-line/70 pt-2">
-                    <span className="eyebrow !text-[0.6rem]">Shared with</span>
-                    {r.sharedRiders.map(rider => (
-                      <span key={rider.name} className="inline-flex items-center gap-1 rounded-md bg-surface-2 px-1.5 py-0.5">
-                        <span className="text-xs font-semibold text-ink">{firstName(rider.name)}</span>
-                        <GenderTag gender={rider.gender} />
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </li>
-            )
-          })}
+          {rides.map(r => <PastRideRow key={r.id} ride={r} onReload={onReload} />)}
         </ul>
       )}
     </section>
+  )
+}
+
+function PastRideRow({ ride: r, onReload }: { ride: PassengerRide; onReload: () => Promise<void> }) {
+  const done = r.status === 'DROPPED_OFF'
+  const pooled = r.farePaisa < r.quotedFarePaisa
+
+  return (
+    <li className="rounded-xl border border-line bg-surface-2/35 px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-bold text-ink">
+            {r.pickupZone.name} <span className="text-ink-3">→</span> {r.destinationZone.name}
+          </p>
+          <p className="mt-0.5 font-mono text-[0.68rem] text-ink-3">{shortDate(r.createdAt)}</p>
+        </div>
+        <div className="text-right">
+          <p className={`font-mono text-sm font-bold ${done ? 'text-ink' : 'text-ink-3 line-through'}`}>
+            {formatTaka(r.farePaisa)}
+          </p>
+          <p className={`mt-0.5 text-[0.68rem] font-bold uppercase tracking-wider ${done ? 'text-signal' : 'text-alert'}`}>
+            {done ? (pooled ? 'Arrived · pooled' : 'Arrived') : 'Cancelled'}
+          </p>
+        </div>
+      </div>
+
+      {r.sharedGenders.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-line/70 pt-2">
+          <span className="eyebrow !text-[0.6rem]">Shared with</span>
+          <span className="flex items-center gap-1">
+            {r.sharedGenders.map((g, i) => <GenderTag key={i} gender={g} />)}
+          </span>
+        </div>
+      )}
+
+      {done && (r.feedback || r.canGiveFeedback) && (
+        <div className="mt-2 border-t border-line/70 pt-2">
+          {r.feedback ? (
+            <div className="flex items-center gap-2">
+              <StarDisplay rating={r.feedback.rating} />
+              {r.feedback.comment && (
+                <span className="truncate text-xs italic text-ink-3">“{r.feedback.comment}”</span>
+              )}
+            </div>
+          ) : (
+            <FeedbackForm rideId={r.id} onSubmitted={onReload} />
+          )}
+        </div>
+      )}
+    </li>
+  )
+}
+
+function FeedbackForm({ rideId, onSubmitted }: { rideId: string; onSubmitted: () => Promise<void> }) {
+  const [rating, setRating] = useState(0)
+  const [comment, setComment] = useState('')
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function submit() {
+    if (rating === 0) return
+    setBusy(true)
+    setError(null)
+    try {
+      await api.submitFeedback(rideId, { rating, comment: comment.trim() || undefined })
+      await onSubmitted()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not submit feedback')
+      setBusy(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="text-xs font-bold text-signal hover:underline">
+        Rate this ride
+      </button>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      <StarPicker value={rating} onChange={setRating} />
+      <input
+        type="text"
+        value={comment}
+        onChange={e => setComment(e.target.value)}
+        placeholder="Add a comment (optional)"
+        maxLength={500}
+        className="field !py-1.5 text-xs"
+      />
+      {error && <p className="text-xs text-alert">{error}</p>}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void submit()}
+          disabled={rating === 0 || busy}
+          className="btn-primary !px-3 !py-1.5 text-xs"
+        >
+          {busy && <Spinner />}
+          {busy ? 'Submitting' : 'Submit'}
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className="text-xs text-ink-3 hover:text-ink">
+          Cancel
+        </button>
+      </div>
+    </div>
   )
 }
 

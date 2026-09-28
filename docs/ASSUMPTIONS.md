@@ -208,24 +208,43 @@ Each is implemented consistently throughout the codebase and seed data.
     deciding and the number the passenger is actually charged after accepting always
     agree.
 
-17. **Gender is visible where it helps a passenger decide, and recorded wherever a
-    ride records who else was aboard — but a co-passenger's name is still withheld
-    until they're actually matched.**
+17. **A passenger may see another passenger's gender, never their name — this
+    holds everywhere two passengers' data could meet, not just before joining.**
     Every user now carries a `gender` (`MALE` / `FEMALE` / `OTHER`, required at
     registration, `NOT NULL` from migration `004_user_gender.sql`). `GET
     /pools/nearby` — the one endpoint assumption 13 documents as deliberately
     withholding co-passenger names — gains `memberGenders`, one entry per
     passenger already aboard (current status `MATCHED`/`PICKED_UP`), so someone
     deciding whether to join a pool can see who's already in it without that
-    pool exposing anyone's identity. Once actually matched, `PassengerRideDTO`
-    replaces the bare `sharedWith` count with `sharedRiders`, a
-    `{ name, gender }` per co-passenger — covering everyone who rode along in
-    that pool, including bookings already `DROPPED_OFF`, which `shared_with`
+    pool exposing anyone's identity. The same rule extends to a passenger's own
+    matched ride and its history: `PassengerRideDTO` replaces the bare
+    `sharedWith` count with `sharedGenders`, a `Gender[]` — one entry per
+    co-passenger, deliberately never a name — covering everyone who rode along
+    in that pool, including bookings already `DROPPED_OFF`, which `shared_with`
     itself deliberately excludes (assumption 16's fare math only counts still-
     active bookings; a completed ride's history is a different question, not
-    a live price). This is why `ride.repo.ts` computes `shared_riders` as its
+    a live price). This is why `ride.repo.ts` computes `shared_genders` as its
     own subquery rather than reusing `shared_with`'s: the two intentionally
     disagree once a passenger drops off. A past ride's card on `PastRides`
     shows exactly this list — its "record in history" is this same
-    `sharedRiders` array, not a separately stored snapshot, so it stays
-    correct if a ride's pool membership is ever re-read.
+    `sharedGenders` array, not a separately stored snapshot, so it stays
+    correct if a ride's pool membership is ever re-read. (An earlier revision
+    of this feature also surfaced each co-passenger's first name here; that was
+    a mistake this assumption corrects — a driver still sees full names, via
+    `DriverPassengerDTO`, because a driver is not a fellow passenger and needs
+    to identify who to pick up.)
+
+18. **A passenger may rate a ride only after being dropped off, and only once.**
+    `ride_feedback` (migration `005_ride_feedback.sql`) holds one row per ride:
+    `rating` (1–5, required) and an optional `comment`, behind a
+    `UNIQUE(ride_request_id)` — a second attempt hits that constraint rather
+    than a read-then-write race, mirroring how seat claims and pool joins are
+    guarded elsewhere in this project. `POST /rides/:id/feedback` refuses with
+    `NOT_DROPPED_OFF` at any earlier status (`REQUESTED`, `MATCHED`,
+    `PICKED_UP`) and `FEEDBACK_ALREADY_GIVEN` on a repeat, and — like every
+    other ride endpoint — is scoped to the calling passenger's own ride, so one
+    passenger can never rate another's trip. `PassengerRideDTO` carries the
+    result back as `feedback` (null until given) and a precomputed
+    `canGiveFeedback` boolean (`status === 'DROPPED_OFF' && feedback === null`),
+    so the frontend never has to re-derive that rule itself — the same pattern
+    `canCancel` already uses.

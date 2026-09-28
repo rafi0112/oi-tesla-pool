@@ -1,4 +1,5 @@
 import { PoolRow } from '../repositories/pool.repo'
+import { Gender } from '../repositories/user.repo'
 
 export interface PoolOptionDTO {
   id: string
@@ -8,15 +9,20 @@ export interface PoolOptionDTO {
   seatsAvailable: number
   seatCapacity: number
   windowClosesInSeconds: number
+  /** Gender of each passenger already aboard, one entry per current member — never their name. */
+  memberGenders: Gender[]
   joinable: boolean
   reason?: string
 }
 
 // Deliberately omits every fare column and every co-passenger's name or
 // destination — a browsing passenger sees only what they need to decide
-// between joining this pool and booking their own.
+// between joining this pool and booking their own. Gender is the one
+// exception: it's exposed on purpose, so someone deciding whether to join can
+// see who's already aboard before they commit.
 export function toPoolOptionDTO(
   pool: PoolRow,
+  memberGenders: Gender[],
   verdict: { ok: boolean; reason?: string },
   message: string | undefined,
 ): PoolOptionDTO {
@@ -35,6 +41,7 @@ export function toPoolOptionDTO(
     seatsAvailable: pool.seats_available,
     seatCapacity:   pool.seat_capacity,
     windowClosesInSeconds,
+    memberGenders,
     joinable:       verdict.ok,
     ...(verdict.ok ? {} : { reason: message }),
   }

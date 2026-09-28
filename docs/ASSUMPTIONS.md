@@ -207,3 +207,25 @@ Each is implemented consistently throughout the codebase and seed data.
     member count before the driver commits — so the number a driver sees while
     deciding and the number the passenger is actually charged after accepting always
     agree.
+
+17. **Gender is visible where it helps a passenger decide, and recorded wherever a
+    ride records who else was aboard — but a co-passenger's name is still withheld
+    until they're actually matched.**
+    Every user now carries a `gender` (`MALE` / `FEMALE` / `OTHER`, required at
+    registration, `NOT NULL` from migration `004_user_gender.sql`). `GET
+    /pools/nearby` — the one endpoint assumption 13 documents as deliberately
+    withholding co-passenger names — gains `memberGenders`, one entry per
+    passenger already aboard (current status `MATCHED`/`PICKED_UP`), so someone
+    deciding whether to join a pool can see who's already in it without that
+    pool exposing anyone's identity. Once actually matched, `PassengerRideDTO`
+    replaces the bare `sharedWith` count with `sharedRiders`, a
+    `{ name, gender }` per co-passenger — covering everyone who rode along in
+    that pool, including bookings already `DROPPED_OFF`, which `shared_with`
+    itself deliberately excludes (assumption 16's fare math only counts still-
+    active bookings; a completed ride's history is a different question, not
+    a live price). This is why `ride.repo.ts` computes `shared_riders` as its
+    own subquery rather than reusing `shared_with`'s: the two intentionally
+    disagree once a passenger drops off. A past ride's card on `PastRides`
+    shows exactly this list — its "record in history" is this same
+    `sharedRiders` array, not a separately stored snapshot, so it stays
+    correct if a ride's pool membership is ever re-read.

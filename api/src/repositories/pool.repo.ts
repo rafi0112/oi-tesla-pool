@@ -1,5 +1,6 @@
 import { PoolClient } from 'pg'
 import { db } from '../db/pool'
+import { Gender } from './user.repo'
 
 const ACTIVE_POOL_STATUSES = ['FORMING', 'ACCEPTED', 'DRIVER_ARRIVED', 'EN_ROUTE']
 
@@ -29,6 +30,7 @@ export interface VehicleRow {
 export interface PoolMemberRow {
   ride_id: string
   passenger_name: string
+  passenger_gender: Gender
   seats: number
   status: string
   pickup_zone_id: number
@@ -105,6 +107,7 @@ export async function findPoolMembers(poolId: string): Promise<PoolMemberRow[]> 
   const { rows } = await db.query<RawPoolMemberRow>(
     `SELECT r.id            AS ride_id,
             u.name          AS passenger_name,
+            u.gender        AS passenger_gender,
             r.seats,
             r.status,
             r.pickup_zone_id,

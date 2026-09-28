@@ -1,5 +1,11 @@
 import { PoolClient } from 'pg'
 import { db } from '../db/pool'
+import { Gender } from './user.repo'
+
+export interface SharedRiderRow {
+  name: string
+  gender: Gender
+}
 
 export interface RideRow {
   id: string
@@ -21,6 +27,15 @@ export interface RideRow {
   distance_km: number | null
   /** Other active bookings sharing this ride's pool — excludes this row. */
   shared_with: number
+  /**
+   * Name and gender of every other booking that ever rode along in this
+   * ride's pool (matched, on board, or already dropped off) — excludes this
+   * row. Feeds both the live "Sharing" detail and the past-ride history,
+   * unlike shared_with, which only counts bookings still active (see
+   * ACTIVE_IN_POOL in passenger.dto.ts) since dropped-off fares are already
+   * locked and must not move.
+   */
+  shared_riders: SharedRiderRow[]
   /** Null until the ride is matched to a pool. */
   driver_name: string | null
   vehicle_name: string | null
@@ -44,7 +59,14 @@ const SELECT_RIDE = `
             FROM ride_requests peer
            WHERE peer.pool_id = r.pool_id
              AND peer.id <> r.id
-             AND peer.status IN ('MATCHED','PICKED_UP')) AS shared_with
+             AND peer.status IN ('MATCHED','PICKED_UP')) AS shared_with,
+         (SELECT COALESCE(json_agg(json_build_object('name', pu.name, 'gender', pu.gender)
+                           ORDER BY pu.name), '[]')
+            FROM ride_requests peer
+            JOIN users pu ON pu.id = peer.passenger_id
+           WHERE peer.pool_id = r.pool_id
+             AND peer.id <> r.id
+             AND peer.status IN ('MATCHED','PICKED_UP','DROPPED_OFF')) AS shared_riders
   FROM   ride_requests r
   JOIN   zones pz ON pz.id = r.pickup_zone_id
   JOIN   zones dz ON dz.id = r.destination_zone_id

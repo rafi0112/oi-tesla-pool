@@ -1,4 +1,4 @@
-import { RideRow } from '../repositories/ride.repo'
+import { RideRow, SharedRiderRow } from '../repositories/ride.repo'
 import { StatusEventRow } from '../repositories/event.repo'
 import { UserRow } from '../repositories/user.repo'
 import { ZoneRow } from '../repositories/zone.repo'
@@ -20,6 +20,8 @@ export interface PassengerRideDTO {
   /** Populated once matched. Never carries a co-passenger's details. */
   driver: { name: string; vehicle: string } | null
   sharedWith: number
+  /** Name and gender of every other booking that shared this ride's pool — the ride's own history record. */
+  sharedRiders: SharedRiderRow[]
   canCancel: boolean
   createdAt: string
 }
@@ -92,6 +94,7 @@ export function toPassengerRideDTO(r: RideRow): PassengerRideDTO {
                         ? { name: r.driver_name, vehicle: r.vehicle_name }
                         : null,
     sharedWith:       r.shared_with,
+    sharedRiders:     r.shared_riders,
     canCancel:        canTransition('ride', r.status, 'CANCELLED'),
     createdAt:        r.created_at,
   }

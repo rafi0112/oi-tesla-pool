@@ -353,7 +353,12 @@ export async function findNearbyPools(
       zones,
       distances,
     )
-    return toPoolOptionDTO(pool, verdict, verdict.ok ? undefined : joinRejectionMessage(verdict.reason))
+    const memberGenders = members
+      .filter(m => ACTIVE_MEMBER_STATUSES.has(m.status))
+      .map(m => m.passenger_gender)
+    return toPoolOptionDTO(
+      pool, memberGenders, verdict, verdict.ok ? undefined : joinRejectionMessage(verdict.reason),
+    )
   }))
 
   // Joinable options first, then by seats available, so the best fit leads.

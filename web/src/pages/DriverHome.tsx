@@ -82,6 +82,7 @@ export function DriverHome() {
               zoneId={profile.data.currentZone?.id ?? null}
               vehicle={profile.data.vehicle}
               totalEarningsPaisa={profile.data.totalEarningsPaisa}
+              todayEarningsPaisa={profile.data.todayEarningsPaisa}
               locked={Boolean(pool.data)}
               onChange={async (isOnline, zoneId) => {
                 await run(() => api.setAvailability(isOnline ? { isOnline, zoneId: zoneId! } : { isOnline }))
@@ -146,18 +147,24 @@ export function DriverHome() {
 /* ─────────────────────────────────────────────────────── availability ── */
 
 function AvailabilityBar({
-  zones, isOnline, zoneId, vehicle, totalEarningsPaisa, locked, onChange,
+  zones, isOnline, zoneId, vehicle, totalEarningsPaisa, todayEarningsPaisa, locked, onChange,
 }: {
   zones: Zone[]
   isOnline: boolean
   zoneId: number | null
   vehicle: { name: string; seatCapacity: number } | null
   totalEarningsPaisa: number
+  todayEarningsPaisa: number
   locked: boolean
   onChange: (isOnline: boolean, zoneId: number | null) => Promise<void>
 }) {
   const [choice, setChoice] = useState<number | null>(zoneId ?? zones.find(z => z.name === 'Banani')?.id ?? zones[0].id)
   const [busy, setBusy] = useState(false)
+  // Both figures already arrived in the one GET /drivers/me response (see
+  // ride.repo.ts's sumDriverEarnings) — this is a pure client-side toggle,
+  // no fetch, so switching filters is instant.
+  const [earningsFilter, setEarningsFilter] = useState<'today' | 'total'>('today')
+  const shownEarnings = earningsFilter === 'today' ? todayEarningsPaisa : totalEarningsPaisa
 
   useEffect(() => {
     if (zoneId !== null) setChoice(zoneId)
@@ -196,9 +203,27 @@ function AvailabilityBar({
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <div className="text-right sm:text-left" title="Lifetime earnings across every completed trip">
-          <p className="eyebrow">Total earned</p>
-          <p className="font-mono text-lg font-bold text-signal">{formatTaka(totalEarningsPaisa)}</p>
+        <div className="text-right sm:text-left">
+          <div className="flex items-center justify-end gap-1.5 sm:justify-start">
+            <p className="eyebrow">{earningsFilter === 'today' ? 'Earned today' : 'Total earned'}</p>
+            <div role="radiogroup" aria-label="Earnings period" className="inline-flex rounded-md border border-line-2 bg-surface-2 p-0.5">
+              {(['today', 'total'] as const).map(f => (
+                <button
+                  key={f}
+                  type="button"
+                  role="radio"
+                  aria-checked={earningsFilter === f}
+                  onClick={() => setEarningsFilter(f)}
+                  className={`rounded px-1.5 py-px font-mono text-[0.6rem] font-bold uppercase tracking-wider transition-colors ${
+                    earningsFilter === f ? 'bg-ink text-paper' : 'text-ink-3 hover:text-ink'
+                  }`}
+                >
+                  {f === 'today' ? 'Today' : 'All time'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="font-mono text-lg font-bold text-signal">{formatTaka(shownEarnings)}</p>
         </div>
 
         <label className="flex items-center gap-2.5">
@@ -361,8 +386,19 @@ function ActivePool({
             Close pool
           </button>
         )}
-        {pool.status === 'ACCEPTED' && (
-          <button type="button" className="btn-primary" onClick={() => void run(() => api.poolAction(pool.id, 'arrive'), 'Marked as arrived')}>
+        {/*
+          Arriving is a separate, real-world event from closing the window —
+          a driver can genuinely be standing at the pickup while the pool is
+          still FORMING, so this shows there too, not just once ACCEPTED.
+          Ghost style while FORMING (it's the secondary option next to Close
+          pool); primary once ACCEPTED, where it's the only action left.
+        */}
+        {(pool.status === 'FORMING' || pool.status === 'ACCEPTED') && (
+          <button
+            type="button"
+            className={pool.status === 'ACCEPTED' ? 'btn-primary' : 'btn-ghost'}
+            onClick={() => void run(() => api.poolAction(pool.id, 'arrive'), 'Marked as arrived')}
+          >
             I’ve arrived
           </button>
         )}

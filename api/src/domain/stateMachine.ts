@@ -9,7 +9,12 @@ export const RIDE_TRANSITIONS: Record<string, readonly string[]> = {
 }
 
 export const POOL_TRANSITIONS: Record<string, readonly string[]> = {
-  FORMING:        ['ACCEPTED', 'CANCELLED'],
+  // DRIVER_ARRIVED is reachable straight from FORMING — a driver can
+  // physically arrive at the pickup before the wait window has run out or
+  // been closed. See pool.service.ts's markArrived, which also clears
+  // wait_until whenever it fires from FORMING, since arriving ends the
+  // waiting window regardless of how much time was left on it.
+  FORMING:        ['ACCEPTED', 'DRIVER_ARRIVED', 'CANCELLED'],
   ACCEPTED:       ['DRIVER_ARRIVED', 'CANCELLED'],
   DRIVER_ARRIVED: ['EN_ROUTE', 'CANCELLED'],
   EN_ROUTE:       ['COMPLETED'],

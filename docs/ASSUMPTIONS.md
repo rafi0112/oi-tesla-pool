@@ -382,3 +382,126 @@ Each is implemented consistently throughout the codebase and seed data.
     (assumption 24) already hide their timer whenever the pool isn't
     `FORMING`, so neither needed a code change to reflect this — the timer
     simply isn't there any more once the next poll sees the new status.
+
+26. **Auth is Supabase's own now — this app no longer hashes a password or
+    signs a token itself, for any sign-in method.**
+    This replaces assumption... (there was no numbered assumption for the
+    original argon2+JWT scheme; it was simply how §"Auth" in CLAUDE.md's
+    stack table was built from day one). The frontend calls `supabase-js`
+    directly — `signUp()`, `signInWithPassword()`, `signInWithOAuth()` for
+    Google and LinkedIn — and Supabase issues and refreshes the session
+    entirely on its own; this app's `AuthContext` only mirrors whatever
+    `onAuthStateChange` reports. The Express API never sees a password: its
+    `authenticate` middleware calls `supabase.auth.getUser(token)` (the anon
+    key is enough — no shared JWT secret or JWKS bookkeeping on this side),
+    which works identically whatever the sign-in method was.
+
+    **`public.users` is populated by a trigger, never by this app's own
+    code.** `on_auth_user_created` (migrations `007_supabase_auth.sql`,
+    `008_profile_completed.sql`) fires the instant Supabase Auth inserts into
+    `auth.users` — covering email/password signup and every OAuth provider
+    identically, since all of them create that row the same way — and copies
+    `raw_user_meta_data` into a matching `public.users` row (and, for a
+    driver, their vehicle). `users.id` is now always a Supabase Auth id,
+    enforced by `REFERENCES auth.users(id) ON DELETE CASCADE`, not a value
+    this app invents; `createUser` no longer exists in `user.repo.ts`.
+
+    **An OAuth sign-in can't supply role, gender, or a vehicle before the
+    redirect** — there's no form to fill in — so the trigger gives it
+    `role: 'PASSENGER'`, `gender: 'OTHER'`, and `profile_completed: false`.
+    Every route gate (`ProtectedRoute`, `RootRedirect`) checks that flag
+    before checking role, and routes to `/complete-profile`
+    (`POST /auth/complete-profile`) if it's false — the same information
+    `signUp()`'s own metadata would have supplied up front, just collected
+    one screen later. Email/password `signUp()` always sends
+    `raw_user_meta_data` with an explicit `role`, so `profile_completed`
+    starts `true` for that path and the extra screen never appears.
+
+    **Local Postgres (docker-compose) has no `auth` schema**, so both
+    migrations guard their `auth.users`-dependent statements behind
+    `to_regclass('auth.users') IS NOT NULL` and simply no-op there rather
+    than failing `npm run migrate`. This is a real, deliberate narrowing:
+    **auth-gated functionality now only works against an actual Supabase
+    project** — there is no local equivalent to fall back to, unlike
+    assumption 23's "any Postgres" for the database alone.
+
+    **This broke the integration test suite's login helper as a direct
+    consequence**, and that has not been repaired as part of this change.
+    `tests/helpers/api.ts`'s `login()` posted to `/auth/login`, which no
+    longer exists — every test that calls `tokenFor()` will fail until the
+    helper is rewritten to authenticate through Supabase itself (e.g.
+    `supabase-js` `signInWithPassword` against real seeded Supabase Auth
+    users, or the admin API to create/tear down per-test users). That rewrite
+    is nontrivial: `truncateAll()` can no longer indiscriminately wipe
+    `users`, since the row is owned by a trigger reacting to `auth.users`,
+    which `TRUNCATE` on the `public` schema never touches — the two would
+    drift out of sync. This is flagged here rather than fixed because it is
+    a separate, sizable piece of work, not because it's been overlooked.
+
+    **The 4 story-cast accounts are created through Supabase Auth's admin API
+    now, not this app's own seed script.** `npm run seed` seeds only zones
+    and the distance matrix; `npm run seed:auth` (`db/seedAuth.ts`, using the
+    service role key) calls `admin.createUser()` once per cast member with
+    `email_confirm: true` and the same metadata shape `signUp()` would send,
+    so the trigger creates their profiles (and Jashim's vehicle) exactly as
+    it would for a real signup. Re-running it is safe — it checks
+    `listUsers()` first and skips anyone who already exists.
+
+    **Supabase's own free-tier limits showed up during testing and are worth
+    knowing about, not bugs in this app**: its built-in mailer enforces a low
+    hourly rate limit on `signUp()`/OTP calls project-wide, hit easily by a
+    few manual registration attempts in a row (fixed by waiting for the
+    window to reset, or by configuring custom SMTP in Authentication >
+    Settings); and it rejects some domains as unroutable at the email-format
+    validation step before ever attempting to send anything — this project's
+    own seed domain, `@oitesla.test`, is one of them, which is why
+    `seedAuth.ts` uses the admin API (no format gate) rather than public
+    `signUp()`.
+
+27. **The urgency ("halve the timer") button is a one-time action per
+    booking, enforced in the database, not just in the UI.** A new
+    `ride_requests.urgency_used` boolean (migration
+    `009_urgency_limit_and_earnings.sql`) is checked and flipped inside the
+    same locked transaction as the timer shrink: `applyUrgency` in
+    `pool.service.ts` now locks both the pool row and the passenger's own
+    ride row (`lockMatchedMembership`, `SELECT ... FOR UPDATE`) before
+    reading `urgency_used`, so two rapid clicks from the same passenger — or
+    two browser tabs — can't both slip through the check before either
+    write lands; the second attempt gets `409 URGENCY_ALREADY_USED`. The DTO
+    exposes this as `canApplyUrgency` (false once used, once the window's
+    closed, or once the ride leaves `MATCHED`), and the frontend
+    (`PoolWindowBanner` in `PassengerHome.tsx`) also disables the button the
+    instant a click succeeds, via local `usedThisSession` state, so the UI
+    doesn't wait for the next poll to catch up.
+
+    **A driver can mark themselves arrived during `FORMING`, not only after
+    the pool becomes `ACCEPTED`.** The state machine (`stateMachine.ts`) now
+    allows `FORMING → DRIVER_ARRIVED` directly, alongside the existing
+    `ACCEPTED → DRIVER_ARRIVED`. `markArrived` in `pool.service.ts` checks
+    whether the pool was still `FORMING` before transitioning, and if so
+    also clears `wait_until` — the wait window has no more meaning once the
+    driver is physically at the pickup point, and every passenger's timer
+    banner disappears on the next poll as a result. `DriverHome.tsx` renders
+    "I've arrived" for both `FORMING` and `ACCEPTED` pools (ghost-styled
+    while still forming), separate from "Close pool", which stays
+    `FORMING`-only — a driver can now be standing at the curb before the
+    pool naturally fills or times out.
+
+    **Driver earnings ("today" and "all-time") are both computed in a
+    single query**, not two round-trips and not a running counter kept in
+    sync on every drop-off. `sumDriverEarnings` in `ride.repo.ts` uses one
+    `SELECT SUM(fare) FILTER (WHERE dropped_off_at >= today_midnight),
+    SUM(fare)` — one aggregate scan, two filtered totals — backed by a new
+    partial index, `ride_requests_dropped_off_at_idx ON (dropped_off_at)
+    WHERE status = 'DROPPED_OFF'`, so the scan stays cheap as the table
+    grows rather than degrading with every completed ride ever recorded.
+    `dropped_off_at` itself is a new column, stamped by `markDroppedOffNow`
+    in the same transaction as the `DROPPED_OFF` transition, giving the
+    query something indexable to filter on (the existing `updated_at` isn't
+    exclusively a drop-off timestamp). `GET /drivers/me` returns both
+    `totalEarningsPaisa` and `todayEarningsPaisa` in one response, so the
+    Today/All-time toggle in `AvailabilityBar` (`DriverHome.tsx`) is a
+    client-side-only state flip — zero extra network calls to switch
+    views. Driver trip history was already fully DB-backed before this
+    change (`GET /drivers/me/pools` reading real `pools`/`ride_requests`
+    rows) and needed no changes here.

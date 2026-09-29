@@ -12,7 +12,7 @@ Section 1 of that file (Working Rules) applies to every step without exception.
 | Backend | Node.js · Express · TypeScript · `pg` (raw SQL, **no ORM**) |
 | Frontend | React · Vite · React Router · Tailwind CSS |
 | Database | PostgreSQL 16 |
-| Auth | `argon2` for password hashing · `jsonwebtoken` for JWT (24 h, HS256) |
+| Auth | Supabase Auth (`@supabase/supabase-js`) — email/password, Google, LinkedIn; see docs/ASSUMPTIONS.md #26 |
 | Validation | `zod` on every request body |
 | Tests | Vitest · Supertest |
 | Container | Docker Compose |

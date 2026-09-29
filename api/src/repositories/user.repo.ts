@@ -7,22 +7,22 @@ export interface UserRow {
   id: string
   name: string
   email: string
-  password_hash: string
   role: 'PASSENGER' | 'DRIVER'
   gender: Gender
   is_online: boolean
   current_zone_id: number | null
+  /** False only for a fresh OAuth sign-in — see completeProfile below. */
+  profile_completed: boolean
   created_at: string
 }
 
-export async function findUserByEmail(email: string): Promise<UserRow | null> {
-  const { rows } = await db.query<UserRow>(
-    `SELECT * FROM users WHERE email = $1`,
-    [email],
-  )
-  return rows[0] ?? null
-}
-
+/**
+ * id is always a Supabase Auth id (auth.users.id) — this row only exists
+ * because the on_auth_user_created trigger (migration 007) created it the
+ * instant Supabase Auth created the matching auth.users row. There is no
+ * createUser here any more: this app never inserts a user directly, whether
+ * that's email/password signup or an OAuth provider.
+ */
 export async function findUserById(id: string): Promise<UserRow | null> {
   const { rows } = await db.query<UserRow>(
     `SELECT * FROM users WHERE id = $1`,
@@ -67,15 +67,18 @@ export async function updateUserZone(
   return rows[0]
 }
 
-export async function createUser(
-  tx: PoolClient,
-  data: { name: string; email: string; passwordHash: string; role: 'PASSENGER' | 'DRIVER'; gender: Gender },
+/**
+ * Fills in what an OAuth sign-in couldn't supply (Google/LinkedIn give no
+ * way to collect role, gender, or a driver's vehicle at sign-in time) — see
+ * POST /auth/complete-profile. Only ever touches this one user's own row.
+ */
+export async function completeProfile(
+  userId: string,
+  data: { role: 'PASSENGER' | 'DRIVER'; gender: Gender },
 ): Promise<UserRow> {
-  const { rows } = await tx.query<UserRow>(
-    `INSERT INTO users (name, email, password_hash, role, gender)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING *`,
-    [data.name, data.email, data.passwordHash, data.role, data.gender],
+  const { rows } = await db.query<UserRow>(
+    `UPDATE users SET role = $2, gender = $3, profile_completed = true WHERE id = $1 RETURNING *`,
+    [userId, data.role, data.gender],
   )
   return rows[0]
 }

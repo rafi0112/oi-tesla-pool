@@ -33,7 +33,13 @@ export function deriveTestUrl(databaseUrl: string): string {
 
 export const config = {
   databaseUrl: resolveDatabaseUrl(),
-  jwtSecret:   requireEnv('JWT_SECRET'),
   port:        parseInt(process.env['API_PORT'] ?? '4000', 10),
   nodeEnv,
+  // Auth is now Supabase's own — the anon key verifies a token the same way
+  // the browser's supabase-js client would; the service role key is only
+  // used server-side, for admin actions like creating the demo cast (see
+  // db/seedAuth.ts), and must never reach the frontend bundle.
+  supabaseUrl:            requireEnv('SUPABASE_URL'),
+  supabaseAnonKey:        requireEnv('SUPABASE_ANON_KEY'),
+  supabaseServiceRoleKey: requireEnv('SUPABASE_SERVICE_ROLE_KEY'),
 }

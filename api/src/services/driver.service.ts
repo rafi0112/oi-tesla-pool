@@ -37,33 +37,33 @@ export async function setAvailability(
   driverId: string,
   data: z.infer<typeof availabilitySchema>,
 ): Promise<DriverProfileDTO> {
-  const [vehicle, totalEarningsPaisa] = await Promise.all([
+  const [vehicle, earnings] = await Promise.all([
     findVehicleByDriver(driverId),
     sumDriverEarnings(driverId),
   ])
 
   if (!data.isOnline) {
     const user = await updateDriverAvailability(driverId, false, null)
-    return toDriverProfileDTO(user, null, vehicle, totalEarningsPaisa)
+    return toDriverProfileDTO(user, null, vehicle, earnings)
   }
 
   const zone = await findZoneById(data.zoneId!)
   if (!zone) throw new NotFoundError('Zone not found')
 
   const user = await updateDriverAvailability(driverId, true, zone.id)
-  return toDriverProfileDTO(user, zone, vehicle, totalEarningsPaisa)
+  return toDriverProfileDTO(user, zone, vehicle, earnings)
 }
 
 export async function getProfile(driverId: string): Promise<DriverProfileDTO> {
   const user = await findUserById(driverId)
   if (!user) throw new NotFoundError('Driver not found')
 
-  const [zone, vehicle, totalEarningsPaisa] = await Promise.all([
+  const [zone, vehicle, earnings] = await Promise.all([
     user.current_zone_id === null ? null : findZoneById(user.current_zone_id),
     findVehicleByDriver(driverId),
     sumDriverEarnings(driverId),
   ])
-  return toDriverProfileDTO(user, zone, vehicle, totalEarningsPaisa)
+  return toDriverProfileDTO(user, zone, vehicle, earnings)
 }
 
 /**

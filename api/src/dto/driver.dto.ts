@@ -1,7 +1,7 @@
 import { PoolRow, PoolMemberRow, VehicleRow } from '../repositories/pool.repo'
 import { UserRow } from '../repositories/user.repo'
 import { ZoneRow } from '../repositories/zone.repo'
-import { OpenRequestRow } from '../repositories/ride.repo'
+import { OpenRequestRow, DriverEarnings } from '../repositories/ride.repo'
 import { farePaisaFor } from '../domain/fare'
 
 const ACTIVE_MEMBER_STATUSES = new Set(['MATCHED', 'PICKED_UP'])
@@ -14,13 +14,15 @@ export interface DriverProfileDTO {
   vehicle: { name: string; seatCapacity: number } | null
   /** Lifetime earnings across every fully dropped-off ride this driver has completed. */
   totalEarningsPaisa: number
+  /** Earnings from rides dropped off since local midnight — both figures come from the one query, so switching which one the console shows costs nothing. */
+  todayEarningsPaisa: number
 }
 
 export function toDriverProfileDTO(
   u: UserRow,
   zone: ZoneRow | null,
   vehicle: VehicleRow | null,
-  totalEarningsPaisa: number,
+  earnings: DriverEarnings,
 ): DriverProfileDTO {
   return {
     id:                 u.id,
@@ -28,7 +30,8 @@ export function toDriverProfileDTO(
     isOnline:           u.is_online,
     currentZone:        zone ? { id: zone.id, name: zone.name } : null,
     vehicle:            vehicle ? { name: vehicle.name, seatCapacity: vehicle.seat_capacity } : null,
-    totalEarningsPaisa,
+    totalEarningsPaisa: earnings.totalPaisa,
+    todayEarningsPaisa: earnings.todayPaisa,
   }
 }
 

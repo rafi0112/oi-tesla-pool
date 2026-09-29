@@ -37,6 +37,8 @@ export interface PassengerRideDTO {
    * and any of them pressing "urgent" shortens what everyone else sees too.
    */
   poolWaitUntil: string | null
+  /** True while this booking may still press "urgent" — false once the window's closed or this booking has already used its one press. */
+  canApplyUrgency: boolean
   /** Set once this passenger has rated the ride — only possible after DROPPED_OFF. */
   feedback: FeedbackDTO | null
   /** True once the ride is DROPPED_OFF and no feedback has been given yet. */
@@ -121,6 +123,7 @@ export function toPassengerRideDTO(r: RideRow): PassengerRideDTO {
     sharedWith:       r.shared_with,
     sharedGenders:    r.shared_genders,
     poolWaitUntil:    r.pool_wait_until,
+    canApplyUrgency:  r.status === 'MATCHED' && r.pool_wait_until !== null && !r.urgency_used,
     feedback:         r.feedback,
     canGiveFeedback:  r.status === 'DROPPED_OFF' && r.feedback === null,
     canCancel:        canTransition('ride', r.status, 'CANCELLED'),

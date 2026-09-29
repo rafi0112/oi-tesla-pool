@@ -49,6 +49,8 @@ export interface RideRow {
    * it isn't copied per rider, it's read live off the one pool row they share.
    */
   pool_wait_until: string | null
+  /** True once this booking has pressed "urgent" — at most once per booking, ever. */
+  urgency_used: boolean
 }
 
 export interface FeedbackRow {
@@ -161,14 +163,34 @@ export async function findActiveRideByPassenger(passengerId: string): Promise<Ri
 }
 
 /** True while this passenger currently has a MATCHED (waiting-to-board) booking in this pool. */
-export async function isMatchedInPool(passengerId: string, poolId: string): Promise<boolean> {
-  const { rows } = await db.query(
-    `SELECT 1 FROM ride_requests
+export interface MatchedMembershipRow {
+  id: string
+  urgency_used: boolean
+}
+
+/**
+ * Locks this passenger's own booking in this pool for the rest of the
+ * transaction — used only by applyUrgency (pool.service.ts), so the
+ * membership check and the one-press-per-booking check (urgency_used) are
+ * read under the same lock that then flips it, closing the race a plain
+ * SELECT would leave between "check" and "use".
+ */
+export async function lockMatchedMembership(
+  tx: PoolClient,
+  passengerId: string,
+  poolId: string,
+): Promise<MatchedMembershipRow | null> {
+  const { rows } = await tx.query<MatchedMembershipRow>(
+    `SELECT id, urgency_used FROM ride_requests
       WHERE pool_id = $1 AND passenger_id = $2 AND status = 'MATCHED'
-      LIMIT 1`,
+      FOR UPDATE`,
     [poolId, passengerId],
   )
-  return rows.length > 0
+  return rows[0] ?? null
+}
+
+export async function markUrgencyUsed(tx: PoolClient, rideId: string): Promise<void> {
+  await tx.query(`UPDATE ride_requests SET urgency_used = true WHERE id = $1`, [rideId])
 }
 
 export async function createRide(
@@ -300,9 +322,27 @@ export async function findOpenRequestsInZone(zoneId: number): Promise<OpenReques
 }
 
 /** Every fare permanently earned by this driver — summed once a ride is fully dropped off. */
-export async function sumDriverEarnings(driverId: string): Promise<number> {
-  const { rows } = await db.query<{ total: string | null }>(
-    `SELECT COALESCE(SUM(r.final_fare_paisa), 0) AS total
+export interface DriverEarnings {
+  totalPaisa: number
+  todayPaisa: number
+}
+
+/**
+ * Both figures in one query — one round trip, one scan of this driver's
+ * dropped-off rides, `FILTER` doing the "today" split rather than a second
+ * query — so a driver toggling Today/All-time in the UI is free: both
+ * numbers are already in hand from the one GET /drivers/me call, nothing to
+ * re-fetch. dropped_off_at (set the instant a ride is actually dropped off —
+ * see pool.service.ts's dropOffPassenger) and its partial index
+ * (migration 009) are what keep the "today" half cheap as this table grows.
+ */
+export async function sumDriverEarnings(driverId: string): Promise<DriverEarnings> {
+  const { rows } = await db.query<{ total: string | null; today: string | null }>(
+    `SELECT
+       COALESCE(SUM(r.final_fare_paisa), 0) AS total,
+       COALESCE(SUM(r.final_fare_paisa) FILTER (
+         WHERE r.dropped_off_at >= date_trunc('day', now())
+       ), 0) AS today
      FROM   ride_requests r
      JOIN   pools    p ON p.id = r.pool_id
      JOIN   vehicles v ON v.id = p.vehicle_id
@@ -310,7 +350,12 @@ export async function sumDriverEarnings(driverId: string): Promise<number> {
        AND  r.status = 'DROPPED_OFF'`,
     [driverId],
   )
-  return Number(rows[0].total)
+  return { totalPaisa: Number(rows[0].total), todayPaisa: Number(rows[0].today) }
+}
+
+/** Stamped in the same transaction as the DROPPED_OFF transition — see pool.service.ts's dropOffPassenger. */
+export async function markDroppedOffNow(tx: PoolClient, rideId: string): Promise<void> {
+  await tx.query(`UPDATE ride_requests SET dropped_off_at = now() WHERE id = $1`, [rideId])
 }
 
 export interface BoardingMemberRow {

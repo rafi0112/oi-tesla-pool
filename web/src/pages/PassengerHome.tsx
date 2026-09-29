@@ -626,7 +626,12 @@ function RideTicket({
         </div>
 
         {current.poolWaitUntil && current.poolId && (
-          <PoolWindowBanner poolId={current.poolId} waitUntil={current.poolWaitUntil} onChanged={detail.reload} />
+          <PoolWindowBanner
+            poolId={current.poolId}
+            waitUntil={current.poolWaitUntil}
+            canApplyUrgency={current.canApplyUrgency}
+            onChanged={detail.reload}
+          />
         )}
       </div>
 
@@ -685,18 +690,25 @@ function RideTicket({
  * the moment they next poll, since it's the one pool row they all read.
  */
 function PoolWindowBanner({
-  poolId, waitUntil, onChanged,
-}: { poolId: string; waitUntil: string; onChanged: () => Promise<void> }) {
+  poolId, waitUntil, canApplyUrgency, onChanged,
+}: { poolId: string; waitUntil: string; canApplyUrgency: boolean; onChanged: () => Promise<void> }) {
   const now = useNow(1000)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [usedThisSession, setUsedThisSession] = useState(false)
   const expired = new Date(waitUntil).getTime() <= now
+
+  // canApplyUrgency comes from the last poll, up to POLL_MS stale — flipping
+  // this locally the instant the request succeeds means the button can't be
+  // double-clicked in the gap before the next poll confirms it server-side.
+  const alreadyUsed = !canApplyUrgency || usedThisSession
 
   async function urgent() {
     setBusy(true)
     setError(null)
     try {
       await api.applyUrgency(poolId)
+      setUsedThisSession(true)
       await onChanged()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not reduce the timer')
@@ -717,12 +729,12 @@ function PoolWindowBanner({
         <button
           type="button"
           onClick={() => void urgent()}
-          disabled={busy}
+          disabled={busy || alreadyUsed}
           className="btn-ghost !py-2 text-sm"
-          title="Halves however much time is currently left"
+          title={alreadyUsed ? 'You’ve already used your one speed-up for this ride' : 'Halves however much time is currently left — once per ride'}
         >
           {busy && <Spinner />}
-          {busy ? 'Reducing' : 'In a hurry? Halve the timer'}
+          {busy ? 'Reducing' : alreadyUsed ? 'Already sped up once' : 'In a hurry? Halve the timer'}
         </button>
         {error && <p className="mt-1.5 text-xs text-alert">{error}</p>}
       </div>

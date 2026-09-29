@@ -14,6 +14,8 @@ export interface User {
   email: string
   role: Role
   gender: Gender
+  /** False only for a fresh OAuth sign-in — the app routes to a short setup step until this is true. */
+  profileCompleted: boolean
 }
 
 export interface Zone {
@@ -58,6 +60,8 @@ export interface PassengerRide {
   sharedGenders: Gender[]
   /** The pool's live wait deadline — null once it's no longer accepting joins. Shared by every current member and the driver. */
   poolWaitUntil: string | null
+  /** True while this booking may still press "urgent" — false once the window's closed or this booking has already used its one press. */
+  canApplyUrgency: boolean
   /** Set once this passenger has rated the ride — only possible after DROPPED_OFF. */
   feedback: Feedback | null
   /** True once the ride is DROPPED_OFF and no feedback has been given yet. */
@@ -91,6 +95,8 @@ export interface DriverProfile {
   vehicle: { name: string; seatCapacity: number } | null
   /** Lifetime earnings across every fully dropped-off ride this driver has completed. */
   totalEarningsPaisa: number
+  /** Earnings from rides dropped off since local midnight. */
+  todayEarningsPaisa: number
 }
 
 export interface DriverPassenger {

@@ -2,8 +2,9 @@ import { z } from 'zod'
 import { withTransaction } from '../db/pool'
 import { findUserById } from '../repositories/user.repo'
 import {
-  findRideById, setRidePool, lockRideById, isMatchedInPool,
+  findRideById, setRidePool, lockRideById,
   lockMatchedMembers, setFinalFare, countPickedUpInPool,
+  lockMatchedMembership, markUrgencyUsed, markDroppedOffNow,
 } from '../repositories/ride.repo'
 import {
   findVehicleByDriver,
@@ -396,12 +397,6 @@ export async function applyUrgency(passengerId: string, poolId: string): Promise
   const pool = await findPoolFresh(poolId)
   if (!pool) throw new NotFoundError('Pool not found')
 
-  // 404, not 403 — same reasoning as every other ownership check in this
-  // file: a passenger who isn't aboard this pool has no business learning it
-  // exists, let alone that it's currently FORMING.
-  const isMember = await isMatchedInPool(passengerId, poolId)
-  if (!isMember) throw new NotFoundError('Pool not found')
-
   if (pool.status !== 'FORMING' || pool.wait_until === null) {
     throw new ConflictError(
       'NOT_WAITING',
@@ -411,13 +406,30 @@ export async function applyUrgency(passengerId: string, poolId: string): Promise
 
   const poolWaitUntil = await withTransaction(async tx => {
     const locked = await lockPoolById(tx, poolId)
-    const halved = locked ? await halveWaitUntil(tx, poolId) : null
-    if (!locked || halved === null) {
+    if (!locked) throw new NotFoundError('Pool not found')
+
+    // Locks this passenger's own booking in the same transaction that then
+    // flips urgency_used — 404, not 403, if they're not aboard this pool at
+    // all, same reasoning as every other ownership check in this file: a
+    // passenger who isn't a member has no business learning the pool exists.
+    const membership = await lockMatchedMembership(tx, passengerId, poolId)
+    if (!membership) throw new NotFoundError('Pool not found')
+    if (membership.urgency_used) {
+      throw new ConflictError(
+        'URGENCY_ALREADY_USED',
+        'You’ve already used your one “in a hurry” request for this ride',
+      )
+    }
+
+    const halved = locked.status === 'FORMING' ? await halveWaitUntil(tx, poolId) : null
+    if (halved === null) {
       throw new ConflictError(
         'NOT_WAITING',
         'This pool isn’t waiting for anyone right now — there’s no timer to reduce',
       )
     }
+
+    await markUrgencyUsed(tx, membership.id)
     await insertPoolEvent(tx, {
       poolId, fromStatus: 'FORMING', toStatus: 'FORMING', actorUserId: passengerId, reason: 'urgency_halved',
     })
@@ -440,24 +452,6 @@ export function joinRejectionMessage(reason: string | undefined): string {
   }
 }
 
-/** Shared by the actions whose only effect is a pool status change. */
-async function transitionOwnedPool(
-  driverId: string,
-  poolId: string,
-  next: string,
-): Promise<DriverPoolDTO> {
-  const owned = await findPoolFreshForDriver(poolId, driverId)
-  if (!owned) throw new NotFoundError('Pool not found')
-
-  await withTransaction(async tx => {
-    const pool = await lockPoolById(tx, poolId)
-    if (!pool) throw new NotFoundError('Pool not found')
-    await transitionPool(tx, pool, next, driverId)
-  })
-
-  return loadPoolDTO(poolId)
-}
-
 /**
  * Ends the assembling window early. The transition table refuses a non-FORMING
  * pool. wait_until is cleared in the same transaction — otherwise a pool closed
@@ -478,8 +472,28 @@ export async function closePool(driverId: string, poolId: string): Promise<Drive
   return loadPoolDTO(poolId)
 }
 
-export function markArrived(driverId: string, poolId: string): Promise<DriverPoolDTO> {
-  return transitionOwnedPool(driverId, poolId, 'DRIVER_ARRIVED')
+/**
+ * A driver can mark "arrived" from FORMING just as validly as from ACCEPTED —
+ * arriving at the pickup is a real-world, location-based event, independent
+ * of whether the wait window happens to still be open. Deliberately not
+ * routed through transitionOwnedPool: unlike every other bare status change,
+ * this one also has to end the wait window itself when it fires early,
+ * exactly as closePool does — otherwise a pool marked "driver arrived" would
+ * still show a live countdown and, worse, would still accept new joins.
+ */
+export async function markArrived(driverId: string, poolId: string): Promise<DriverPoolDTO> {
+  const owned = await findPoolFreshForDriver(poolId, driverId)
+  if (!owned) throw new NotFoundError('Pool not found')
+
+  await withTransaction(async tx => {
+    const pool = await lockPoolById(tx, poolId)
+    if (!pool) throw new NotFoundError('Pool not found')
+    const wasForming = pool.status === 'FORMING'
+    await transitionPool(tx, pool, 'DRIVER_ARRIVED', driverId)
+    if (wasForming) await clearWaitUntil(tx, poolId)
+  })
+
+  return loadPoolDTO(poolId)
 }
 
 /** Drops one passenger. PICKED_UP is the only status with a DROPPED_OFF edge. */
@@ -500,6 +514,11 @@ export async function dropOffPassenger(
     }
 
     await transitionRide(tx, ride, 'DROPPED_OFF', driverId)
+    // Stamped here, in the same transaction as the transition itself, so
+    // "earnings today" (ride.repo.ts's sumDriverEarnings) reflects this the
+    // instant it commits — not the moment the fare was locked at boarding,
+    // which can be minutes or hours earlier.
+    await markDroppedOffNow(tx, ride.id)
   })
 
   return loadPoolDTO(poolId)

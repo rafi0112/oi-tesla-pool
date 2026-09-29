@@ -767,14 +767,12 @@ function RouteBar({ from, to, status, meta }: { from: string; to: string; status
         />
         <span className="absolute left-0 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border-[3px] border-ink bg-paper" />
         <span className="absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border-[3px] border-signal bg-signal" />
-        <span
-          className="absolute top-1/2 grid h-8 w-8 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-ink shadow-[0_6px_16px_-6px_rgb(0_0_0/0.6)] transition-[left] duration-1000 ease-[var(--ease-out-expo)]"
+        <img
+          src="/rickshaw-badge.webp"
+          alt=""
+          className="absolute top-1/2 h-9 w-9 -translate-x-1/2 -translate-y-1/2 rounded-full shadow-[0_6px_16px_-6px_rgb(0_0_0/0.6)] transition-[left] duration-1000 ease-[var(--ease-out-expo)]"
           style={{ left: `calc(0.5rem + (100% - 1rem) * ${progress / 100})`, opacity: waiting ? 0.4 : 1 }}
-        >
-          <svg viewBox="0 0 16 16" className="h-4 w-4 text-signal" fill="currentColor">
-            <path d="M9.2 1 3 9h4.3l-.6 6L13 7H8.6z" />
-          </svg>
-        </span>
+        />
       </div>
 
       {meta && <p className="mt-2 text-center font-mono text-xs text-ink-3">{meta}</p>}

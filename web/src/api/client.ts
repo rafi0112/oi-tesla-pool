@@ -85,16 +85,17 @@ function parseJson(text: string): unknown {
 }
 
 export const api = {
-  login: (email: string, password: string) =>
-    request<{ token: string; user: User }>('/auth/login', { method: 'POST', body: { email, password } }),
-  register: (body: {
-    name: string; email: string; password: string
+  // No login()/register() here any more — the frontend talks to Supabase
+  // Auth directly for those (see lib/supabase.ts and AuthContext.tsx). This
+  // client only ever calls this app's own Express API with whatever session
+  // token supabase-js currently holds.
+  me: () => request<{ user: User }>('/auth/me'),
+  /** The one-time follow-up an OAuth sign-in (Google/LinkedIn) needs — see User.profileCompleted. */
+  completeProfile: (body: {
     role: 'PASSENGER' | 'DRIVER'; gender: 'MALE' | 'FEMALE' | 'OTHER'
-    // Required only when role is 'DRIVER' — a passenger never sends these.
     vehicleName?: string; seatCapacity?: number
   }) =>
-    request<{ token: string; user: User }>('/auth/register', { method: 'POST', body }),
-  me: () => request<{ user: User }>('/auth/me'),
+    request<{ user: User }>('/auth/complete-profile', { method: 'POST', body }),
 
   zones: () => request<{ zones: Zone[] }>('/zones'),
   quote: (body: { pickupZoneId: number; destinationZoneId: number; seats: number }) =>

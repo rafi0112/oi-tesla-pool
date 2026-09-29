@@ -4,7 +4,6 @@ import { api } from '../api/client'
 import { homeFor, useAuth } from '../context/AuthContext'
 import { Logo } from '../components/Logo'
 import { RouteRadar } from '../components/RouteRadar'
-import { Rickshaw } from '../components/Rickshaw'
 import { Avatar, ThemeToggle } from '../components/Chrome'
 import { OAuthButtons } from '../components/OAuthButtons'
 import { Notice, Spinner } from '../components/States'
@@ -181,7 +180,6 @@ export function StoryPanel() {
     <aside className="theme-console grain relative overflow-hidden bg-paper text-ink">
       {/* soft signal glow behind the radar */}
       <div aria-hidden className="pointer-events-none absolute -right-40 top-1/3 h-[34rem] w-[34rem] rounded-full bg-signal/10 blur-3xl" />
-      <Rickshaw className="pointer-events-none absolute -bottom-3 -left-3 h-auto w-40 opacity-[0.14] sm:w-52" />
 
       <div className="relative flex h-full flex-col px-6 py-6 sm:px-12 sm:py-9 lg:py-10">
         <Logo size="md" sub="Dhaka · battery pooling" />
@@ -229,9 +227,17 @@ export function StoryPanel() {
           </div>
         )}
 
-        <p className="mt-6 font-mono text-[0.68rem] uppercase tracking-[0.2em] text-ink-3 lg:mt-auto">
-          ৳20 base · ৳10 / km · pooled −20%
-        </p>
+        <div className="mt-6 flex items-center gap-3 lg:mt-auto">
+          <img
+            src="/rickshaw-badge.webp"
+            alt=""
+            aria-hidden
+            className="h-10 w-10 shrink-0 rounded-full sm:h-12 sm:w-12"
+          />
+          <p className="font-mono text-[0.68rem] uppercase tracking-[0.2em] text-ink-3">
+            ৳20 base · ৳10 / km · pooled −20%
+          </p>
+        </div>
       </div>
     </aside>
   )
